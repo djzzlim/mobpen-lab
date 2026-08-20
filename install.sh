@@ -111,21 +111,63 @@ esac
 
 command -v curl >/dev/null 2>&1 || apt-get update -y && apt-get install -y curl ca-certificates
 
+# Never prompt for git credentials during clones (e.g. dead/renamed repos)
+export GIT_TERMINAL_PROMPT=0
+
 # -----------------------------------------------------------------------------
 # Low-level helpers
 # -----------------------------------------------------------------------------
 fetch() { curl -fL --retry 3 --retry-delay 2 "$1" -o "$2" || return 1; }
 
 apt_install() {
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" || warn "apt install failed for: $*"
+  if DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" >/dev/null 2>&1; then
+    return 0
+  fi
+  warn "batch apt install failed for: $* - retrying per-package"
+  local fail=0
+  for pkg in "$@"; do
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >/dev/null 2>&1; then
+      :
+    else
+      warn "apt install failed: $pkg"
+      fail=1
+    fi
+  done
+  return "$fail"
+}
+
+# Pick the first installed/available package from a candidate list
+apt_pick() {
+  local pkg
+  for pkg in "$@"; do
+    if apt-cache show "$pkg" >/dev/null 2>&1; then
+      printf '%s' "$pkg"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Resolve latest GitHub release asset URL. $1=owner/repo  $2=asset regex
+# Uses python3 for JSON parsing so it never depends on jq being installed.
 gh_latest_asset() {
   local repo="$1" pattern="$2"
-  curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" \
-    | jq -r --arg p "$pattern" '.assets[] | select(.name | test($p)) | .browser_download_url' \
-    | head -n1
+  python3 - "$repo" "$pattern" <<'PYEOF'
+import json, re, sys, urllib.request
+repo, pattern = sys.argv[1], sys.argv[2]
+req = urllib.request.Request(
+    f"https://api.github.com/repos/{repo}/releases/latest",
+    headers={"User-Agent": "mobpen-lab", "Accept": "application/vnd.github+json"})
+try:
+    data = json.load(urllib.request.urlopen(req, timeout=30))
+except Exception:
+    sys.exit(0)
+rx = re.compile(pattern)
+for a in data.get("assets", []):
+    if rx.search(a.get("name", "")):
+        print(a["browser_download_url"])
+        break
+PYEOF
 }
 
 link_bin() {
@@ -177,10 +219,18 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
   apt_install \
     git curl wget unzip zip xz-utils jq gnupg ca-certificates \
     build-essential python3 python3-pip python3-venv \
-    openjdk-17-jdk-headless ruby-full \
+    ruby-full \
     usbutils usbmuxd libimobiledevice-utils libusb-1.0-0-dev \
     android-tools-adb scrcpy sqlitebrowser apktool radare2 zaproxy ghidra \
     openssh-client net-tools python3-tk tmux adb
+
+  # JDK for jadx / Android Studio tooling (17 is gone from Kali; try 21/25 first)
+  local_jdk="$(apt_pick openjdk-21-jdk-headless openjdk-25-jdk-headless openjdk-17-jdk-headless default-jdk-headless)"
+  if [[ -n "$local_jdk" ]]; then
+    apt_install "$local_jdk"
+  else
+    warn "no JDK package found - jadx/Android tooling may lack a JVM"
+  fi
 
   if [[ "$DO_VENV" == "1" ]]; then
     section "Creating shared Python venv: $VENV"
@@ -189,7 +239,7 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
   fi
 
   # Install the 'mobpen' management CLI (only when run from a repo checkout)
-  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || true)"
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" && pwd 2>/dev/null || true)"
   if [[ -n "$repo_dir" && -f "$repo_dir/mobpen" ]]; then
     ln -sf "$repo_dir/mobpen" /usr/local/bin/mobpen
     ok "installed 'mobpen' CLI -> /usr/local/bin/mobpen (from $repo_dir)"
@@ -212,7 +262,29 @@ install_ios() {
     echo 'deb [signed-by=/usr/share/keyrings/checkra1n.gpg] https://assets.checkra.in/debian /' \
       > /etc/apt/sources.list.d/checkra1n.list
     apt-get update -y || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y checkra1n || warn "checkra1n install failed (APT repo may be unreachable)"
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y checkra1n >/dev/null 2>&1; then
+      ok "checkra1n installed via apt"
+    else
+      # Kali dropped libncurses5/libgdk-pixbuf2.0-0 etc, so the apt package
+      # often fails. Fall back to extracting the binary from the .deb.
+      warn "checkra1n apt install failed (missing legacy libs on Kali) - extracting binary from .deb"
+      local chk_deb chk_dir
+      chk_deb="$(curl -fsSL https://assets.checkra.in/debian/Packages 2>/dev/null | grep -E '^Filename: ./checkra1n_0\.12\.4' | head -n1 | sed 's|^Filename: ./||')"
+      [[ -n "$chk_deb" ]] || chk_deb="checkra1n_0.12.4_amd64.deb"
+      chk_dir="/opt/mobpen-lab/ios/checkra1n"
+      if fetch "https://assets.checkra.in/debian/$chk_deb" "$LAB_TMP/checkra1n.deb"; then
+        rm -rf "$chk_dir" && mkdir -p "$chk_dir"
+        dpkg-deb -x "$LAB_TMP/checkra1n.deb" "$chk_dir"
+        if [[ -f "$chk_dir/usr/bin/checkra1n" ]]; then
+          ln -sf "$chk_dir/usr/bin/checkra1n" /usr/local/bin/checkra1n
+          ok "checkra1n extracted to $chk_dir (may need legacy libs; if it won't launch, install libncurses5/libimobiledevice from an older Debian repo)"
+        else
+          warn "checkra1n .deb extraction failed - manual: https://checkra.in"
+        fi
+      else
+        warn "checkra1n download failed - manual: https://checkra.in"
+      fi
+    fi
   fi
 
   # --- palera1n (GitHub latest release) ---
@@ -238,7 +310,26 @@ install_ios() {
     link_bin frida-ps
     link_bin frida-trace
     link_bin frida-join
-    link_bin frida-inject
+    # frida-inject is no longer shipped by the frida-tools pip package;
+    # grab the standalone binary from the matching frida release instead.
+    if [[ ! -x "${VENV}/bin/frida-inject" && ! -x /usr/local/bin/frida-inject ]]; then
+      local inj_url
+      inj_url="$(gh_latest_asset frida/frida "frida-inject-.*-linux-${FRIDA_ARCH}\.xz\$" || true)"
+      if [[ -n "$inj_url" ]]; then
+        fetch "$inj_url" "$LAB_TMP/frida-inject.xz" && {
+          xz -dkf "$LAB_TMP/frida-inject.xz"
+          if [[ -f "$LAB_TMP/frida-inject" ]]; then
+            mv "$LAB_TMP/frida-inject" /usr/local/bin/frida-inject
+            chmod +x /usr/local/bin/frida-inject
+            ok "frida-inject -> /usr/local/bin/frida-inject"
+          else
+            warn "frida-inject extraction failed"
+          fi
+        } || warn "frida-inject download failed - grab it from https://github.com/frida/frida/releases"
+      else
+        warn "could not resolve frida-inject release"
+      fi
+    fi
   else
     pip3 install --break-system-packages frida-tools || warn "frida-tools install failed"
   fi
@@ -255,12 +346,16 @@ install_ios() {
     fi
     if command -v node >/dev/null 2>&1; then
       npm install -g igf || warn "npm install -g igf failed"
+      # npm 11+ blocks postinstall scripts (frida / better-sqlite3 native builds)
+      # unless approved; approve pending scripts and rebuild so igf's binary exists.
+      npm approve-scripts --allow-scripts-pending >/dev/null 2>&1 || true
+      npm rebuild -g igf >/dev/null 2>&1 || true
       if ! command -v igf >/dev/null 2>&1; then
         local igf_bin
         igf_bin="$(npm prefix -g 2>/dev/null)/bin/igf"
         [[ -x "$igf_bin" ]] && ln -sf "$igf_bin" /usr/local/bin/igf
       fi
-      command -v igf >/dev/null 2>&1 && ok "igf (Grapefruit) installed" || warn "igf binary not found on PATH"
+      command -v igf >/dev/null 2>&1 && ok "igf (Grapefruit) installed" || warn "igf binary not found on PATH - run: npm approve-scripts --allow-scripts-pending && npm rebuild -g igf"
     else
       warn "Node.js unavailable - install manually then: npm install -g igf"
     fi
@@ -392,7 +487,7 @@ EOF
     ok "dex-tools already installed"
   else
     local d_url
-    d_url="$(gh_latest_asset pxb1988/dex2jar 'dex-tools-[0-9][^/]*\.zip$' || true)"
+    d_url="$(gh_latest_asset pxb1988/dex2jar 'dex-tools-.*\.zip$' || true)"
     if [[ -n "$d_url" ]]; then
       fetch "$d_url" /tmp/dex-tools.zip && {
         mkdir -p /tmp/dex-tools-x && unzip -oq /tmp/dex-tools.zip -d /tmp/dex-tools-x
@@ -561,9 +656,11 @@ EOF
   log "Runtime Mobile Security (RMS)"
   if command -v rms >/dev/null 2>&1 || [[ -d "$LAB_WEB/rms" ]]; then
     ok "rms already present"
+  elif git ls-remote --heads https://github.com/m0bilesecurity/RMS-Runtime-Mobile-Security >/dev/null 2>&1; then
+    git clone --depth 1 https://github.com/m0bilesecurity/RMS-Runtime-Mobile-Security "$LAB_WEB/rms" 2>/dev/null \
+      && ok "rms -> $LAB_WEB/rms" || warn "rms clone failed"
   else
-    git clone --depth 1 https://github.com/mobexler/rms "$LAB_WEB/rms" 2>/dev/null \
-      || warn "rms clone failed"
+    warn "RMS repo unreachable - install manually: git clone https://github.com/m0bilesecurity/RMS-Runtime-Mobile-Security"
   fi
   if [[ -d "$LAB_WEB/rms" && -f "$LAB_WEB/rms/requirements.txt" ]]; then
     if [[ "$DO_VENV" == "1" ]]; then
@@ -629,10 +726,16 @@ install_docker() {
 
   if command -v docker >/dev/null 2>&1; then
     ok "docker already installed"
+  elif [[ "$(. /etc/os-release; echo "$ID")" == "kali" ]]; then
+    # get.docker.com generates a debian repo for kali-rolling which does not
+    # exist upstream; Kali ships docker.io in its own repos - use that.
+    log "Kali detected - installing docker.io from Kali repos"
+    apt_install docker.io docker-compose
+    command -v docker >/dev/null 2>&1 || { apt-get install -y docker.io; }
   else
     log "Installing Docker via get.docker.com"
     fetch https://get.docker.com /tmp/get-docker.sh && sh /tmp/get-docker.sh \
-      || { warn "get.docker.com failed, falling back to apt docker.io"; apt_install docker.io docker-compose-v2; }
+      || { warn "get.docker.com failed, falling back to apt docker.io"; apt_install docker.io docker-compose; }
   fi
 
   systemctl enable --now docker 2>/dev/null || warn "could not enable docker service"

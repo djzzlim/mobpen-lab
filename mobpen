@@ -91,7 +91,7 @@ cmd_status() {
   done
 
   printf '%b== Android / iOS binaries ==%b\n' "$C_BLU" "$C_RST"
-  for t in jadx jadx-gui pidcat scrcpy palera1n checkra1n r2 burpsuite zaproxy studio igf; do
+  for t in frida-inject jadx jadx-gui pidcat scrcpy palera1n checkra1n r2 burpsuite zaproxy studio igf; do
     command -v "$t" >/dev/null 2>&1 && echo "  $t : $(command -v "$t")"
   done
 

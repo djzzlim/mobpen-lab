@@ -41,19 +41,19 @@ confirm() { # $1 = question ; returns 0 for yes
   [[ "$ans" =~ ^[yY] ]]
 }
 
-# Symlinks created by install.sh into /usr/local/bin
-BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui burpsuite palera1n igf mobpen)
+# Symlinks/scripts created by install.sh into /usr/local/bin
+BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui burpsuite palera1n checkra1n igf mobpen)
 D2J_LINKS=(/usr/local/bin/d2j-*.sh)
 
 remove_usr_local_bin() {
   local removed=0
   for l in "${BIN_LINKS[@]}"; do
-    if [[ -L "/usr/local/bin/$l" ]]; then rm -f "/usr/local/bin/$l"; removed=1; ok "removed symlink /usr/local/bin/$l"; fi
+    if [[ -L "/usr/local/bin/$l" || -f "/usr/local/bin/$l" ]]; then rm -f "/usr/local/bin/$l"; removed=1; ok "removed /usr/local/bin/$l"; fi
   done
   for l in $D2J_LINKS; do
     if [[ -L "$l" ]]; then rm -f "$l"; ok "removed symlink $l"; fi
   done
-  [[ "$removed" == "1" || -z "${D2J_LINKS##*d2j*}" ]] || ok "no /usr/local/bin symlinks found"
+  [[ "$removed" == "1" ]] || ok "no /usr/local/bin entries found"
 }
 
 section "Lab folder + docs"
