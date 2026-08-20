@@ -297,11 +297,15 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
   apt_install \
     git curl wget unzip zip xz-utils jq gnupg ca-certificates \
     build-essential python3 python3-pip python3-venv \
-    squashfs-tools p7zip-full \
+    squashfs-tools \
     ruby-full \
     usbutils usbmuxd libimobiledevice-utils libusb-1.0-0-dev \
     android-tools-adb scrcpy sqlitebrowser apktool radare2 zaproxy ghidra \
     openssh-client net-tools python3-tk tmux adb
+
+  # 7z for AppImage extraction (package is '7zip' on Kali, 'p7zip-full' on Debian)
+  z7="$(apt_pick 7zip p7zip-full || true)"
+  [[ -n "$z7" ]] && apt_install "$z7"
 
   # JDK for jadx / Android Studio tooling (17 is gone from Kali; try 21/25 first)
   local_jdk="$(apt_pick openjdk-21-jdk-headless openjdk-25-jdk-headless openjdk-17-jdk-headless default-jdk-headless)"
@@ -595,7 +599,10 @@ EOF
 
   # --- dex2jar / dex-tools ---
   log "dex-tools (dex2jar)"
-  if ! command -v d2j-dex2jar.sh >/dev/null 2>&1 && [[ ! -d /opt/dex-tools ]]; then
+  # Reinstall when the binary is missing OR /opt/dex-tools exists but contains
+  # no d2j-*.sh (e.g. a broken dir left over from a failed first run).
+  if ! command -v d2j-dex2jar.sh >/dev/null 2>&1 \
+     && { [[ ! -d /opt/dex-tools ]] || ! find /opt/dex-tools -name 'd2j-*.sh' -type f 2>/dev/null | grep -q .; }; then
     local d_url dd
     d_url="$(gh_latest_asset pxb1988/dex2jar 'dex-tools-.*\.zip$' || true)"
     if [[ -n "$d_url" ]]; then
@@ -884,20 +891,27 @@ install_utils() {
     if [[ -n "$cut_url" ]]; then
       fetch "$cut_url" "$LAB_TMP/cutter.AppImage" && {
         chmod +x "$LAB_TMP/cutter.AppImage"
-        # Cutter ships a type-1 AppImage: --appimage-extract needs libfuse2.
-        # Install it if available so extraction works on Debian/Kali hosts.
+        # Best-effort libfuse2 (needed only by --appimage-extract). Kali usually
+        # has neither libfuse2 nor libfuse2t64 - that is fine, 7z handles the
+        # type-1 AppImage without it.
         fuse_pkg="$(apt_pick libfuse2t64 libfuse2 || true)"
-        [[ -n "$fuse_pkg" ]] && apt_install "$fuse_pkg"
+        [[ -n "$fuse_pkg" ]] && { apt_install "$fuse_pkg" || warn "no libfuse2 available - using 7z extraction"; }
         cut_ext="$LAB_TMP/cutter-ext"
         rm -rf "$cut_ext" && mkdir -p "$cut_ext"
         cut_ok=0; cut_dir=""
-        if ( cd "$cut_ext" && "$LAB_TMP/cutter.AppImage" --appimage-extract >/dev/null 2>&1 ) \
-           && [[ -d "$cut_ext/squashfs-root" ]]; then
-          cut_dir="$cut_ext/squashfs-root"; cut_ok=1
-        elif command -v 7z >/dev/null 2>&1; then
+        # 7z first: dependency-free and handles type-1 AppImages.
+        if command -v 7z >/dev/null 2>&1; then
           ( cd "$cut_ext" && 7z x -y "$LAB_TMP/cutter.AppImage" >/dev/null 2>&1 ) \
             && [[ -f "$cut_ext/AppRun" ]] && { cut_dir="$cut_ext"; cut_ok=1; }
-        elif command -v unsquashfs >/dev/null 2>&1; then
+        fi
+        # Official --appimage-extract (works when libfuse2 is present)
+        if [[ "$cut_ok" == "0" ]] \
+           && ( cd "$cut_ext" && "$LAB_TMP/cutter.AppImage" --appimage-extract >/dev/null 2>&1 ) \
+           && [[ -d "$cut_ext/squashfs-root" ]]; then
+          cut_dir="$cut_ext/squashfs-root"; cut_ok=1
+        fi
+        # Last resort: unsquashfs (type-2 AppImages)
+        if [[ "$cut_ok" == "0" ]] && command -v unsquashfs >/dev/null 2>&1; then
           unsquashfs -q -d "$cut_ext/squashfs-root" "$LAB_TMP/cutter.AppImage" >/dev/null 2>&1 \
             && [[ -f "$cut_ext/squashfs-root/AppRun" ]] && { cut_dir="$cut_ext/squashfs-root"; cut_ok=1; }
         fi
