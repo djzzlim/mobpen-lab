@@ -5,7 +5,7 @@
 #  Removes everything the installer (install.sh) placed on the system:
 #    - /opt/mobpen-lab            (lab folder + generated docs)
 #    - /opt/mobile-sec-venv       (Python venv + /usr/local/bin symlinks)
-#    - /opt/android-studio, /opt/jadx, /opt/dex-tools, /opt/burpsuite
+#    - /opt/android-studio, /opt/jadx, /opt/dex-tools
 #    - desktop entries, mobsf.service, checkra1n apt repo, npm igf
 #
 #  Usage:
@@ -49,7 +49,7 @@ confirm() { # $1 = question ; returns 0 for yes
 }
 
 # Symlinks/scripts created by install.sh into /usr/local/bin
-BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui burpsuite palera1n igf mobpen ipsw ktool ktool_bless cutter fastboot zipalign)
+BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui palera1n igf mobpen ipsw ktool ktool_bless cutter fastboot zipalign)
 D2J_LINKS=(/usr/local/bin/d2j-*.sh)
 
 remove_usr_local_bin() {
@@ -77,14 +77,14 @@ fi
 remove_usr_local_bin
 
 section "Standalone binaries under /opt"
-for d in /opt/android-studio /opt/jadx /opt/dex-tools /opt/burpsuite; do
-  [[ -e "$d" ]] && { rm -rf "$d"; ok "removed $d"; }
-done
-
-section "Desktop entries"
-for f in /usr/share/applications/android-studio.desktop /usr/share/applications/burpsuite.desktop; do
-  [[ -e "$f" ]] && { rm -f "$f"; ok "removed $f"; }
-done
+for d in /opt/android-studio /opt/jadx /opt/dex-tools; do
+   [[ -e "$d" ]] && { rm -rf "$d"; ok "removed $d"; }
+ done
+ 
+ section "Desktop entries"
+for f in /usr/share/applications/android-studio.desktop; do
+   [[ -e "$f" ]] && { rm -f "$f"; ok "removed $f"; }
+ done
 
 section "MobSF service"
 if [[ -f /etc/systemd/system/mobsf.service ]]; then
@@ -156,6 +156,7 @@ ${C_GRN}mobpen-lab has been uninstalled.${C_RST}
 
 Remaining (removed only with 'yes' above): any apt packages, Docker, NodeSource repo.
 If you chose not to remove Docker, the MobSF image/container may still exist.
+Burp Suite was left in place (launcher + /opt/burpsuite jar kept).
 You can leave the repo folder in place or delete it:
   rm -rf ${REPO_DIR:-/opt/mobpen-lab/mobpen-lab}
 EOF
