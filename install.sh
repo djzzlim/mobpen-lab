@@ -624,6 +624,20 @@ EOF
   else
     ok "dex-tools already installed"
   fi
+  # Normalize a legacy nested layout (/opt/dex-tools/dex-tools-v2.4/...)
+  # left by an older installer bug into the flat layout, so the layout is
+  # consistent and the shims live directly under /opt/dex-tools.
+  if [[ -d /opt/dex-tools ]] \
+     && [[ -z "$(find /opt/dex-tools -maxdepth 1 -name 'd2j-*.sh' -type f -print -quit 2>/dev/null)" ]]; then
+    local nest
+    nest="$(find /opt/dex-tools -mindepth 1 -maxdepth 1 -type d -name 'dex-tools-*' -print -quit 2>/dev/null)"
+    if [[ -n "$nest" ]]; then
+      log "Normalizing legacy nested dex-tools layout ($nest)"
+      find "$nest" -mindepth 1 -maxdepth 1 -exec mv {} /opt/dex-tools/ \; 2>/dev/null
+      rmdir "$nest" 2>/dev/null || true
+      ok "dex-tools layout normalized (flat)"
+    fi
+  fi
   # Ensure d2j-* shims are on PATH. Layout varies (flat or nested under
   # /opt/dex-tools); clear stale links first, then link whatever exists.
   rm -f /usr/local/bin/d2j-*.sh 2>/dev/null
