@@ -37,7 +37,7 @@ a systemd service — all organized under a single documented folder layout.
 ## Quick start
 
 ```bash
-git clone https://github.com/<you>/mobpen-lab.git
+git clone https://github.com/djzzlim/mobpen-lab.git
 cd mobpen-lab
 sudo ./install.sh            # install everything
 ```
@@ -45,7 +45,7 @@ sudo ./install.sh            # install everything
 Install from the repo without cloning:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<you>/mobpen-lab/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/djzzlim/mobpen-lab/main/install.sh | sudo bash
 ```
 
 ### Options
