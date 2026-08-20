@@ -14,6 +14,10 @@
 
 set -uo pipefail
 
+# Make sure the dirs this installer writes to are always on PATH, even under
+# a minimal sudo environment (helps `command -v` checks and the d2j-* links).
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
 # -----------------------------------------------------------------------------
 # Colors / helpers
 # -----------------------------------------------------------------------------
@@ -615,7 +619,7 @@ EOF
     mv "$dd" /opt/dex-tools
   }
   # 1) Install/reinstall whenever the shims aren't present on disk
-  if find /opt/dex-tools -name 'd2j-*.sh' -type f 2>/dev/null | grep -q .; then
+  if [[ -n "$(find /opt/dex-tools -name 'd2j-*.sh' -type f -print -quit 2>/dev/null)" ]]; then
     ok "dex-tools already installed"
   elif dextools_install; then
     ok "dex-tools installed at /opt/dex-tools"
@@ -641,10 +645,10 @@ EOF
   while IFS= read -r d2j; do
     [[ -e "$d2j" ]] && { ln -sf "$d2j" "/usr/local/bin/$(basename "$d2j")"; n_d2j=$((n_d2j+1)); }
   done < <(find /opt/dex-tools -name 'd2j-*.sh' -type f 2>/dev/null)
-  if [[ "$n_d2j" -gt 0 ]] && command -v d2j-dex2jar.sh >/dev/null 2>&1; then
+if [[ "$n_d2j" -gt 0 && -x /usr/local/bin/d2j-dex2jar.sh ]]; then
     ok "d2j-* shims on PATH ($n_d2j linked)"
   else
-    warn "dex-tools unusable - re-run installer or install manually: https://github.com/pxb1988/dex2jar/releases"
+    warn "dex-tools unusable (found $n_d2j shims) - re-run installer or manual: https://github.com/pxb1988/dex2jar/releases"
   fi
 
   # --- apksigner (APK signing/verification) ---
@@ -896,16 +900,13 @@ install_utils() {
   if command -v cutter >/dev/null 2>&1 || [[ -x "$LAB_BIN/cutter/AppRun" ]]; then
     ok "cutter already installed"
   else
-    local cut_url cut_ext cut_dir cut_ok fuse_pkg
+    local cut_url cut_ext cut_dir cut_ok
     cut_url="$(gh_latest_asset rizinorg/cutter 'Cutter-v[0-9].*Linux.*x86_64\.AppImage$' || true)"
     if [[ -n "$cut_url" ]]; then
       fetch "$cut_url" "$LAB_TMP/cutter.AppImage" && {
         chmod +x "$LAB_TMP/cutter.AppImage"
-        # Best-effort libfuse2 (needed only by --appimage-extract). Kali usually
-        # has neither libfuse2 nor libfuse2t64 - that is fine, 7z handles the
-        # type-1 AppImage without it.
-        fuse_pkg="$(apt_pick libfuse2t64 libfuse2 || true)"
-        [[ -n "$fuse_pkg" ]] && { apt_install "$fuse_pkg" || warn "no libfuse2 available - using 7z extraction"; }
+        # Note: no libfuse2 attempt - Kali rarely ships it and 7z (installed in
+        # the base packages) extracts type-1 AppImages without it.
         cut_ext="$LAB_TMP/cutter-ext"
         rm -rf "$cut_ext" && mkdir -p "$cut_ext"
         cut_ok=0; cut_dir=""
