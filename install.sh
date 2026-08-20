@@ -211,7 +211,56 @@ migrate_lab_layout() {
 migrate_lab_layout
 
 # =============================================================================
-# 0. Base system packages
+# 0. System update + VM guest tools
+# =============================================================================
+if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" == "1" || "$DO_UTILS" == "1" ]]; then
+  section "Updating system and installing VM guest tools"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get upgrade -y || warn "apt upgrade had issues - continuing anyway"
+
+  # Detect the hypervisor (systemd-detect-virt, falling back to DMI info)
+  local VM_KIND="none" virt=""
+  if command -v systemd-detect-virt >/dev/null 2>&1; then
+    virt="$(systemd-detect-virt 2>/dev/null || true)"
+  fi
+  if [[ -z "$virt" && -r /sys/class/dmi/id/sys_vendor ]]; then
+    local sv vm
+    sv="$(tr '[:upper:]' '[:lower:]' < /sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
+    case "$sv" in
+      *virtualbox*) virt="oracle" ;;
+      *vmware*)     virt="vmware" ;;
+    esac
+  fi
+  case "$virt" in
+    oracle|virtualbox) VM_KIND="virtualbox" ;;
+    vmware)           VM_KIND="vmware" ;;
+    kvm|qemu|hyperv|microsoft|xen|zvm|bochs|none|"") VM_KIND="none" ;;
+    *)                VM_KIND="none" ;;
+  esac
+
+  if [[ "$VM_KIND" == "virtualbox" ]]; then
+    log "Detected VirtualBox - installing guest additions"
+    apt_install virtualbox-guest-utils virtualbox-guest-x11
+    local vhk
+    vhk="linux-headers-$(uname -r)"
+    if apt-cache show "$vhk" >/dev/null 2>&1; then
+      apt_install "$vhk" virtualbox-guest-dkms build-essential
+    else
+      warn "no matching $vhk package - skipping virtualbox-guest-dkms (guest utils may need a reboot to load)"
+    fi
+    ok "VirtualBox guest tools installed"
+  elif [[ "$VM_KIND" == "vmware" ]]; then
+    log "Detected VMware - installing open-vm-tools"
+    apt_install open-vm-tools-desktop
+    ok "VMware guest tools installed"
+  else
+    warn "No VirtualBox/VMware hypervisor detected (${virt:-none}) - skipping guest tools"
+  fi
+fi
+
+# =============================================================================
+# 1. Base system packages
 # =============================================================================
 if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" == "1" || "$DO_UTILS" == "1" ]]; then
   section "Installing base system packages"
@@ -247,7 +296,7 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
 fi
 
 # =============================================================================
-# 1. iOS Security & Jailbreak Tools
+# 2. iOS Security & Jailbreak Tools
 # =============================================================================
 install_ios() {
   section "iOS tools"
@@ -460,7 +509,7 @@ install_ios() {
 }
 
 # =============================================================================
-# 2. Android Security & Reverse Engineering
+# 3. Android Security & Reverse Engineering
 # =============================================================================
 install_android() {
   section "Android tools"
@@ -671,7 +720,7 @@ EOF
 }
 
 # =============================================================================
-# 3. Web & Network Pentesting
+# 4. Web & Network Pentesting
 # =============================================================================
 install_web() {
   section "Web & network tools"
@@ -731,7 +780,7 @@ EOF
 }
 
 # =============================================================================
-# 4. Utilities & Frameworks
+# 5. Utilities & Frameworks
 # =============================================================================
 install_utils() {
   section "Utilities"
@@ -772,7 +821,7 @@ install_utils() {
 }
 
 # =============================================================================
-# 5. Docker + MobSF service
+# 6. Docker + MobSF service
 # =============================================================================
 install_docker() {
   section "Docker"
@@ -842,7 +891,7 @@ EOF
 }
 
 # =============================================================================
-# 6. Documentation (regenerates README files in each lab folder)
+# 7. Documentation (regenerates README files in each lab folder)
 # =============================================================================
 write_docs() {
   section "Documenting lab layout"
