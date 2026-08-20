@@ -609,7 +609,7 @@ EOF
       fetch "$d_url" /tmp/dex-tools.zip && {
         rm -rf /tmp/dex-tools-x && mkdir -p /tmp/dex-tools-x
         unzip -oq /tmp/dex-tools.zip -d /tmp/dex-tools-x || { warn "dex-tools unzip failed"; false; }
-        dd="$(find /tmp/dex-tools-x -maxdepth 1 -type d -name 'dex-tools-*' -print -quit)"
+        dd="$(find /tmp/dex-tools-x -mindepth 1 -maxdepth 1 -type d -name 'dex-tools-*' -print -quit)"
         if [[ -n "$dd" && -d "$dd" ]]; then
           rm -rf /opt/dex-tools
           mv "$dd" /opt/dex-tools
