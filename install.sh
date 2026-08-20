@@ -220,12 +220,11 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
   apt-get upgrade -y || warn "apt upgrade had issues - continuing anyway"
 
   # Detect the hypervisor (systemd-detect-virt, falling back to DMI info)
-  local VM_KIND="none" virt=""
+  VM_KIND="none"; virt=""
   if command -v systemd-detect-virt >/dev/null 2>&1; then
     virt="$(systemd-detect-virt 2>/dev/null || true)"
   fi
   if [[ -z "$virt" && -r /sys/class/dmi/id/sys_vendor ]]; then
-    local sv vm
     sv="$(tr '[:upper:]' '[:lower:]' < /sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
     case "$sv" in
       *virtualbox*) virt="oracle" ;;
@@ -242,7 +241,6 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
   if [[ "$VM_KIND" == "virtualbox" ]]; then
     log "Detected VirtualBox - installing guest additions"
     apt_install virtualbox-guest-utils virtualbox-guest-x11
-    local vhk
     vhk="linux-headers-$(uname -r)"
     if apt-cache show "$vhk" >/dev/null 2>&1; then
       apt_install "$vhk" virtualbox-guest-dkms build-essential
@@ -268,6 +266,7 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
   apt_install \
     git curl wget unzip zip xz-utils jq gnupg ca-certificates \
     build-essential python3 python3-pip python3-venv \
+    squashfs-tools p7zip-full \
     ruby-full \
     usbutils usbmuxd libimobiledevice-utils libusb-1.0-0-dev \
     android-tools-adb scrcpy sqlitebrowser apktool radare2 zaproxy ghidra \
@@ -490,7 +489,7 @@ install_ios() {
   elif [[ "$DO_VENV" == "1" ]]; then
     "${VENV}/bin/pip" install -q k2l 'setuptools<81' || warn "k2l install failed"
     link_bin ktool
-    link_bin ktool_bless
+    [[ -x "${VENV}/bin/ktool_bless" ]] && link_bin ktool_bless
   else
     pip3 install --break-system-packages k2l 'setuptools<81' || warn "k2l install failed"
   fi
@@ -576,14 +575,20 @@ EOF
   # --- dex2jar / dex-tools ---
   log "dex-tools (dex2jar)"
   if ! command -v d2j-dex2jar.sh >/dev/null 2>&1 && [[ ! -d /opt/dex-tools ]]; then
-    local d_url
+    local d_url dd
     d_url="$(gh_latest_asset pxb1988/dex2jar 'dex-tools-.*\.zip$' || true)"
     if [[ -n "$d_url" ]]; then
       fetch "$d_url" /tmp/dex-tools.zip && {
-        mkdir -p /tmp/dex-tools-x && unzip -oq /tmp/dex-tools.zip -d /tmp/dex-tools-x
-        local dd; dd="$(find /tmp/dex-tools-x -maxdepth 1 -type d -name 'dex-tools-*' -print -quit)"
-        mv "$dd" /opt/dex-tools
-        ok "dex-tools installed at /opt/dex-tools"
+        rm -rf /tmp/dex-tools-x && mkdir -p /tmp/dex-tools-x
+        unzip -oq /tmp/dex-tools.zip -d /tmp/dex-tools-x || { warn "dex-tools unzip failed"; false; }
+        dd="$(find /tmp/dex-tools-x -maxdepth 1 -type d -name 'dex-tools-*' -print -quit)"
+        if [[ -n "$dd" && -d "$dd" ]]; then
+          rm -rf /opt/dex-tools
+          mv "$dd" /opt/dex-tools
+          ok "dex-tools installed at /opt/dex-tools"
+        else
+          warn "dex-tools dir not found inside archive"; false
+        fi
       } || warn "dex2jar download/install failed"
     else
       warn "could not resolve dex2jar release; manual: https://github.com/pxb1988/dex2jar/releases"
@@ -591,14 +596,17 @@ EOF
   else
     ok "dex-tools already installed"
   fi
-  # Ensure d2j-* shims are on PATH (layout varies: /opt/dex-tools/*.sh or
-  # /opt/dex-tools/dex-tools-v2.4/*.sh). Re-run safe.
-  if [[ -d /opt/dex-tools ]]; then
-    local d2j
-    while IFS= read -r d2j; do
-      [[ -e "$d2j" ]] && ln -sf "$d2j" "/usr/local/bin/$(basename "$d2j")"
-    done < <(find /opt/dex-tools -maxdepth 2 -name 'd2j-*.sh' -type f 2>/dev/null)
-    command -v d2j-dex2jar.sh >/dev/null 2>&1 && ok "d2j-* on PATH" || warn "no d2j-*.sh found under /opt/dex-tools"
+  # Ensure d2j-* shims are on PATH. Layout varies (flat or nested under
+  # /opt/dex-tools); clear stale links first, then link whatever exists.
+  rm -f /usr/local/bin/d2j-*.sh 2>/dev/null
+  local n_d2j=0
+  while IFS= read -r d2j; do
+    [[ -e "$d2j" ]] && { ln -sf "$d2j" "/usr/local/bin/$(basename "$d2j")"; n_d2j=$((n_d2j+1)); }
+  done < <(find /opt/dex-tools -name 'd2j-*.sh' -type f 2>/dev/null)
+  if [[ "$n_d2j" -gt 0 ]] && command -v d2j-dex2jar.sh >/dev/null 2>&1; then
+    ok "d2j-* shims on PATH ($n_d2j linked)"
+  else
+    warn "no d2j-*.sh found under /opt/dex-tools (manual: symlink them into /usr/local/bin)"
   fi
 
   # --- apksigner (APK signing/verification) ---
@@ -850,17 +858,36 @@ install_utils() {
   if command -v cutter >/dev/null 2>&1 || [[ -x "$LAB_BIN/cutter/AppRun" ]]; then
     ok "cutter already installed"
   else
-    local cut_url cut_app
+    local cut_url cut_ext cut_dir cut_ok fuse_pkg
     cut_url="$(gh_latest_asset rizinorg/cutter 'Cutter-v[0-9].*Linux.*x86_64\.AppImage$' || true)"
     if [[ -n "$cut_url" ]]; then
       fetch "$cut_url" "$LAB_TMP/cutter.AppImage" && {
         chmod +x "$LAB_TMP/cutter.AppImage"
-        local cut_ext="$LAB_TMP/cutter-ext"
+        # Cutter ships a type-1 AppImage: --appimage-extract needs libfuse2.
+        # Install it if available so extraction works on Debian/Kali hosts.
+        fuse_pkg="$(apt_pick libfuse2t64 libfuse2 || true)"
+        [[ -n "$fuse_pkg" ]] && apt_install "$fuse_pkg"
+        cut_ext="$LAB_TMP/cutter-ext"
         rm -rf "$cut_ext" && mkdir -p "$cut_ext"
-        ( cd "$cut_ext" && "$LAB_TMP/cutter.AppImage" --appimage-extract >/dev/null 2>&1 ) \
-          && mv "$cut_ext/squashfs-root" "$LAB_BIN/cutter" \
-          && ln -sf "$LAB_BIN/cutter/AppRun" /usr/local/bin/cutter
-        command -v cutter >/dev/null 2>&1 && ok "cutter -> /usr/local/bin/cutter" || warn "cutter extraction failed (manual: extract the AppImage and symlink AppRun)"
+        cut_ok=0; cut_dir=""
+        if ( cd "$cut_ext" && "$LAB_TMP/cutter.AppImage" --appimage-extract >/dev/null 2>&1 ) \
+           && [[ -d "$cut_ext/squashfs-root" ]]; then
+          cut_dir="$cut_ext/squashfs-root"; cut_ok=1
+        elif command -v 7z >/dev/null 2>&1; then
+          ( cd "$cut_ext" && 7z x -y "$LAB_TMP/cutter.AppImage" >/dev/null 2>&1 ) \
+            && [[ -f "$cut_ext/AppRun" ]] && { cut_dir="$cut_ext"; cut_ok=1; }
+        elif command -v unsquashfs >/dev/null 2>&1; then
+          unsquashfs -q -d "$cut_ext/squashfs-root" "$LAB_TMP/cutter.AppImage" >/dev/null 2>&1 \
+            && [[ -f "$cut_ext/squashfs-root/AppRun" ]] && { cut_dir="$cut_ext/squashfs-root"; cut_ok=1; }
+        fi
+        if [[ "$cut_ok" == "1" && -x "$cut_dir/AppRun" ]]; then
+          rm -rf "$LAB_BIN/cutter"
+          mv "$cut_dir" "$LAB_BIN/cutter"
+          ln -sf "$LAB_BIN/cutter/AppRun" /usr/local/bin/cutter
+          ok "cutter -> /usr/local/bin/cutter"
+        else
+          warn "cutter extraction failed - manual: https://github.com/rizinorg/cutter/releases (extract the AppImage, symlink AppRun)"
+        fi
         rm -rf "$cut_ext" "$LAB_TMP/cutter.AppImage"
       } || warn "cutter download failed - manual: https://github.com/rizinorg/cutter/releases"
     else
