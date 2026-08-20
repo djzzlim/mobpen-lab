@@ -59,6 +59,7 @@ Usage: sudo ./install.sh [options]
   --docker-only   Only install Docker + MobSF service
   --no-docker     Skip Docker + MobSF setup
   --no-venv       Skip the shared Python venv (pip tools)
+  --docs-only     Only regenerate the lab documentation
   -h, --help      Show this help
 EOF
 }
@@ -74,11 +75,16 @@ while [[ $# -gt 0 ]]; do
     --docker-only) DO_DOCKER=1 ;;
     --no-docker)  DO_DOCKER=-1 ;;
     --no-venv)    DO_VENV=0 ;;
+    --docs-only)  DO_DOCS=1 ;;
     -h|--help)    usage; exit 0 ;;
     *) die "Unknown option: $1 (see --help)" ;;
   esac
   shift
 done
+
+if [[ "${DO_DOCS:-0}" == "1" ]]; then
+  MODE="docs-only"
+fi
 
 if [[ "$MODE" == "all" ]]; then
   DO_IOS=1 DO_ANDROID=1 DO_WEB=1 DO_UTILS=1
@@ -180,6 +186,13 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
     section "Creating shared Python venv: $VENV"
     python3 -m venv "$VENV"
     "${VENV}/bin/pip" install --upgrade pip wheel setuptools || true
+  fi
+
+  # Install the 'mobpen' management CLI (only when run from a repo checkout)
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || true)"
+  if [[ -n "$repo_dir" && -f "$repo_dir/mobpen" ]]; then
+    ln -sf "$repo_dir/mobpen" /usr/local/bin/mobpen
+    ok "installed 'mobpen' CLI -> /usr/local/bin/mobpen (from $repo_dir)"
   fi
 fi
 
@@ -843,6 +856,10 @@ EOF
 # =============================================================================
 # Run
 # =============================================================================
+if [[ "$MODE" == "docs-only" ]]; then
+  write_docs
+  exit 0
+fi
 if [[ "$MODE" == "docker-only" ]]; then
   install_docker
 else

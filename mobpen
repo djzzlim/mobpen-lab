@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  mobpen - command-line manager for the mobpen-lab repo
+#
+#  Usage:
+#    mobpen update          Pull latest repo + re-run installer (updates tools)
+#    mobpen status          Show repo, installed tools & service status
+#    mobpen docs            Regenerate the lab documentation only
+#    mobpen uninstall       Remove everything the installer placed on the system
+#    mobpen version         Print the installed version
+#    mobpen help            Show this help
+#
+#  The repo directory is auto-detected from this script's own location, so you
+#  can symlink it anywhere (install.sh does: /usr/local/bin/mobpen).
+# =============================================================================
+
+set -uo pipefail
+
+C_RED=$'\033[1;31m'; C_GRN=$'\033[1;32m'; C_YLW=$'\033[1;33m'; C_BLU=$'\033[1;34m'; C_RST=$'\033[0m'
+log()   { printf '%b[*]%b %s\n' "$C_BLU" "$C_RST" "$*"; }
+ok()    { printf '%b[+]%b %s\n' "$C_GRN" "$C_RST" "$*"; }
+warn()  { printf '%b[!]%b %s\n' "$C_YLW" "$C_RST" "$*"; }
+die()   { printf '%b[x]%b %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
+
+# Locate the repo: follow this script's symlink (readlink -f) or its own dir
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
+REQUIRED_FILES=(install.sh uninstall.sh)
+for f in "${REQUIRED_FILES[@]}"; do
+  [[ -f "$REPO_DIR/$f" ]] || die "not a mobpen-lab repo: $REPO_DIR (missing $f)"
+done
+
+VERSION="$(git -C "$REPO_DIR" describe --tags --always 2>/dev/null || echo "0.1.0")"
+
+cmd_help() {
+  cat <<EOF
+mobpen - mobile security lab manager
+
+Usage: mobpen <command>
+
+Commands:
+  update      git pull the repo, then re-run the installer to update tools
+              (idempotent; refreshes tools, MobSF image and generated docs)
+  status      show repo info, installed tools and service status
+  docs        regenerate the lab documentation only (/opt/mobpen-lab)
+  uninstall   remove everything the installer placed on the system
+  version     print version
+  help        show this help
+EOF
+}
+
+cmd_update() {
+  log "mobpen-lab repo: $REPO_DIR"
+  if [[ -d "$REPO_DIR/.git" ]]; then
+    log "Pulling latest repo changes..."
+    if git -C "$REPO_DIR" pull --ff-only; then
+      ok "repo up to date"
+    else
+      warn "git pull failed - you may have local changes (git status in $REPO_DIR)"
+    fi
+  else
+    warn "not a git checkout; skipping pull"
+  fi
+
+  log "Re-running installer to update tools (this may take a while)..."
+  sudo bash "$REPO_DIR/install.sh"
+
+  if command -v docker >/dev/null 2>&1; then
+    log "Refreshing MobSF image..."
+    sudo docker pull opensecurity/mobile-security-framework-mobsf:latest || warn "MobSF image pull failed"
+    sudo systemctl restart mobsf 2>/dev/null || warn "could not restart mobsf service"
+  fi
+  ok "update complete"
+}
+
+cmd_status() {
+  printf '%b== Repo ==%b\n' "$C_BLU" "$C_RST"
+  echo "  dir     : $REPO_DIR"
+  echo "  branch  : $(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo n/a)"
+  echo "  version : $VERSION"
+
+  printf '%b== Lab layout ==%b\n' "$C_BLU" "$C_RST"
+  for d in /opt/mobpen-lab /opt/mobile-sec-venv; do
+    [[ -d "$d" ]] && echo "  present: $d" || echo "  missing: $d"
+  done
+
+  printf '%b== Python tools (venv) ==%b\n' "$C_BLU" "$C_RST"
+  for t in frida objection androguard apkleaks qark drozer reflutter rms; do
+    command -v "$t" >/dev/null 2>&1 && echo "  $t : $(command -v "$t")"
+  done
+
+  printf '%b== Android / iOS binaries ==%b\n' "$C_BLU" "$C_RST"
+  for t in jadx jadx-gui pidcat scrcpy palera1n checkra1n r2 burpsuite zaproxy studio igf; do
+    command -v "$t" >/dev/null 2>&1 && echo "  $t : $(command -v "$t")"
+  done
+
+  printf '%b== Services ==%b\n' "$C_BLU" "$C_RST"
+  if command -v docker >/dev/null 2>&1; then
+    echo "  docker : $(systemctl is-active docker 2>/dev/null || echo unknown)"
+  else
+    echo "  docker : not installed"
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    echo "  mobsf  : $(systemctl is-active mobsf 2>/dev/null || echo not-installed)"
+  fi
+}
+
+cmd_docs() {
+  log "Regenerating lab documentation..."
+  sudo bash "$REPO_DIR/install.sh" --docs-only
+}
+
+cmd_uninstall() {
+  warn "This will remove /opt/mobpen-lab, the venv, binaries, symlinks and the MobSF service."
+  local ans
+  read -r -p "Continue? [y/N] " ans
+  [[ "$ans" =~ ^[yY] ]] || { log "aborted"; return 1; }
+  sudo bash "$REPO_DIR/uninstall.sh" --purge
+}
+
+cmd_version() {
+  echo "mobpen $VERSION ($REPO_DIR)"
+}
+
+CMD="${1:-help}"
+case "$CMD" in
+  update)   cmd_update ;;
+  status)   cmd_status ;;
+  docs)     cmd_docs ;;
+  uninstall) cmd_uninstall ;;
+  version)  cmd_version ;;
+  help|-h|--help) cmd_help ;;
+  *) die "unknown command: $CMD (try 'mobpen help')" ;;
+esac

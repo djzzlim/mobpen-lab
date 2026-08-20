@@ -60,6 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/mobpen-lab/main/install.sh | 
 | `--docker-only` | Only install Docker + MobSF service |
 | `--no-docker` | Skip Docker + MobSF setup |
 | `--no-venv` | Skip the shared Python venv (installs pip tools system-wide) |
+| `--docs-only` | Only regenerate the lab documentation |
 | `-h, --help` | Show help |
 
 Examples:
@@ -68,6 +69,24 @@ Examples:
 sudo ./install.sh --ios --no-docker          # iOS tools, no MobSF
 sudo ./install.sh --docker-only              # just Docker + MobSF
 ```
+
+## Managing the lab with `mobpen`
+
+The installer also installs a `mobpen` CLI (`/usr/local/bin/mobpen`) that points
+at your repo checkout. Use it for day-to-day management:
+
+```bash
+mobpen update     # git pull the repo, re-run the installer (updates tools,
+                  # latest releases, MobSF image), refreshes docs
+mobpen status     # repo info, installed tools, docker/mobsf service status
+mobpen docs       # regenerate the lab documentation only
+mobpen uninstall  # remove everything the installer placed on the system
+mobpen version    # show version
+```
+
+> `mobpen` auto-locates the repo from its own symlink, so you can keep the
+> checkout anywhere on disk. If you cloned the repo after installing, just run
+> `sudo ./install.sh` once from the new checkout to re-point it.
 
 ## What lands where
 

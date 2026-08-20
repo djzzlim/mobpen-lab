@@ -42,7 +42,7 @@ confirm() { # $1 = question ; returns 0 for yes
 }
 
 # Symlinks created by install.sh into /usr/local/bin
-BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui burpsuite palera1n igf)
+BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui burpsuite palera1n igf mobpen)
 D2J_LINKS=(/usr/local/bin/d2j-*.sh)
 
 remove_usr_local_bin() {
