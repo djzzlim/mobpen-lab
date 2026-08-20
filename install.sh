@@ -599,34 +599,31 @@ EOF
 
   # --- dex2jar / dex-tools ---
   log "dex-tools (dex2jar)"
-  # Reinstall when the binary is missing OR /opt/dex-tools exists but contains
-  # no d2j-*.sh (e.g. a broken dir left over from a failed first run).
-  if ! command -v d2j-dex2jar.sh >/dev/null 2>&1 \
-     && { [[ ! -d /opt/dex-tools ]] || ! find /opt/dex-tools -name 'd2j-*.sh' -type f 2>/dev/null | grep -q .; }; then
+  # Self-healing install: converge on working d2j-* shims no matter the current
+  # state of /opt/dex-tools (missing, empty, broken, legacy nested, or flat).
+  # Uses a fixed stable release URL so it never depends on the GitHub API,
+  # which rate-limits fresh boxes that download many tools.
+  dextools_install() {
     local d_url dd
-    d_url="$(gh_latest_asset pxb1988/dex2jar 'dex-tools-.*\.zip$' || true)"
-    if [[ -n "$d_url" ]]; then
-      fetch "$d_url" /tmp/dex-tools.zip && {
-        rm -rf /tmp/dex-tools-x && mkdir -p /tmp/dex-tools-x
-        unzip -oq /tmp/dex-tools.zip -d /tmp/dex-tools-x || { warn "dex-tools unzip failed"; false; }
-        dd="$(find /tmp/dex-tools-x -mindepth 1 -maxdepth 1 -type d -name 'dex-tools-*' -print -quit)"
-        if [[ -n "$dd" && -d "$dd" ]]; then
-          rm -rf /opt/dex-tools
-          mv "$dd" /opt/dex-tools
-          ok "dex-tools installed at /opt/dex-tools"
-        else
-          warn "dex-tools dir not found inside archive"; false
-        fi
-      } || warn "dex2jar download/install failed"
-    else
-      warn "could not resolve dex2jar release; manual: https://github.com/pxb1988/dex2jar/releases"
-    fi
-  else
+    d_url="https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip"
+    fetch "$d_url" /tmp/dex-tools.zip || return 1
+    rm -rf /tmp/dex-tools-x && mkdir -p /tmp/dex-tools-x
+    unzip -oq /tmp/dex-tools.zip -d /tmp/dex-tools-x || return 1
+    dd="$(find /tmp/dex-tools-x -mindepth 1 -maxdepth 1 -type d -name 'dex-tools-*' -print -quit 2>/dev/null)"
+    [[ -n "$dd" && -d "$dd" ]] || return 1
+    rm -rf /opt/dex-tools
+    mv "$dd" /opt/dex-tools
+  }
+  # 1) Install/reinstall whenever the shims aren't present on disk
+  if find /opt/dex-tools -name 'd2j-*.sh' -type f 2>/dev/null | grep -q .; then
     ok "dex-tools already installed"
+  elif dextools_install; then
+    ok "dex-tools installed at /opt/dex-tools"
+  else
+    warn "dex2jar download/install failed - manual: https://github.com/pxb1988/dex2jar/releases"
   fi
-  # Normalize a legacy nested layout (/opt/dex-tools/dex-tools-v2.4/...)
-  # left by an older installer bug into the flat layout, so the layout is
-  # consistent and the shims live directly under /opt/dex-tools.
+  # 2) Normalize a legacy nested layout (/opt/dex-tools/dex-tools-v2.4/...)
+  #    left by an older installer bug into the flat layout.
   if [[ -d /opt/dex-tools ]] \
      && [[ -z "$(find /opt/dex-tools -maxdepth 1 -name 'd2j-*.sh' -type f -print -quit 2>/dev/null)" ]]; then
     local nest
@@ -638,8 +635,7 @@ EOF
       ok "dex-tools layout normalized (flat)"
     fi
   fi
-  # Ensure d2j-* shims are on PATH. Layout varies (flat or nested under
-  # /opt/dex-tools); clear stale links first, then link whatever exists.
+  # 3) Link all d2j-* shims into /usr/local/bin (clears stale links first)
   rm -f /usr/local/bin/d2j-*.sh 2>/dev/null
   local n_d2j=0
   while IFS= read -r d2j; do
@@ -648,7 +644,7 @@ EOF
   if [[ "$n_d2j" -gt 0 ]] && command -v d2j-dex2jar.sh >/dev/null 2>&1; then
     ok "d2j-* shims on PATH ($n_d2j linked)"
   else
-    warn "no d2j-*.sh found under /opt/dex-tools (manual: symlink them into /usr/local/bin)"
+    warn "dex-tools unusable - re-run installer or install manually: https://github.com/pxb1988/dex2jar/releases"
   fi
 
   # --- apksigner (APK signing/verification) ---
