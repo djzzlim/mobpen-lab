@@ -805,7 +805,8 @@ install_web() {
 
   # --- Burp Suite Community (JAR-based, non-interactive) ---
   log "Burp Suite Community Edition"
-  if command -v burpsuite >/dev/null 2>&1 && [[ -f /opt/burpsuite/burpsuite_community.jar ]]; then
+  if { command -v burpsuite >/dev/null 2>&1 || [[ -n "$(whereis -b burpsuite 2>/dev/null | awk '{print $2}')" ]]; } \
+     && [[ -f /opt/burpsuite/burpsuite_community.jar ]]; then
     ok "Burp Suite already installed (launcher + jar present)"
   else
     if [[ ! -f /opt/burpsuite/burpsuite_community.jar ]]; then
