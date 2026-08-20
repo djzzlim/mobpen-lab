@@ -33,6 +33,13 @@ fi
 LAB_ROOT="/opt/mobpen-lab"
 VENV="/opt/mobile-sec-venv"
 SUDO_USER_OR_ROOT="${SUDO_USER:-root}"
+# Safe repo dir: empty when run via `curl | sudo bash` (BASH_SOURCE[0] unset).
+# Note: dirname "" == ".", so we must test emptiness first, never default to cwd.
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+else
+  REPO_DIR=""
+fi
 
 confirm() { # $1 = question ; returns 0 for yes
   [[ "$PURGE" == "1" ]] && return 0
@@ -150,5 +157,5 @@ ${C_GRN}mobpen-lab has been uninstalled.${C_RST}
 Remaining (removed only with 'yes' above): any apt packages, Docker, NodeSource repo.
 If you chose not to remove Docker, the MobSF image/container may still exist.
 You can leave the repo folder in place or delete it:
-  rm -rf $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  rm -rf ${REPO_DIR:-/opt/mobpen-lab/mobpen-lab}
 EOF
