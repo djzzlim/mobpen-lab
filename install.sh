@@ -277,7 +277,9 @@ install_ios() {
         dpkg-deb -x "$LAB_TMP/checkra1n.deb" "$chk_dir"
         if [[ -f "$chk_dir/usr/bin/checkra1n" ]]; then
           ln -sf "$chk_dir/usr/bin/checkra1n" /usr/local/bin/checkra1n
-          ok "checkra1n extracted to $chk_dir (may need legacy libs; if it won't launch, install libncurses5/libimobiledevice from an older Debian repo)"
+          ok "checkra1n binary extracted to $chk_dir"
+          warn "checkra1n still needs legacy libs (libncurses5, libgdk-pixbuf2.0-0) that Kali removed."
+          warn "It may not launch here - prefer 'palera1n' (installed by this script) or run checkra1n on Debian 10/11 or a VM."
         else
           warn "checkra1n .deb extraction failed - manual: https://checkra.in"
         fi
