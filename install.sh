@@ -526,9 +526,7 @@ EOF
 
   # --- dex2jar / dex-tools ---
   log "dex-tools (dex2jar)"
-  if command -v d2j-dex2jar.sh >/dev/null 2>&1 || [[ -d /opt/dex-tools ]]; then
-    ok "dex-tools already installed"
-  else
+  if ! command -v d2j-dex2jar.sh >/dev/null 2>&1 && [[ ! -d /opt/dex-tools ]]; then
     local d_url
     d_url="$(gh_latest_asset pxb1988/dex2jar 'dex-tools-.*\.zip$' || true)"
     if [[ -n "$d_url" ]]; then
@@ -536,14 +534,22 @@ EOF
         mkdir -p /tmp/dex-tools-x && unzip -oq /tmp/dex-tools.zip -d /tmp/dex-tools-x
         local dd; dd="$(find /tmp/dex-tools-x -maxdepth 1 -type d -name 'dex-tools-*' -print -quit)"
         mv "$dd" /opt/dex-tools
-        for s in /opt/dex-tools/bin/*.sh; do
-          [[ -e "$s" ]] && ln -sf "$s" "/usr/local/bin/$(basename "$s")"
-        done
         ok "dex-tools installed at /opt/dex-tools"
       } || warn "dex2jar download/install failed"
     else
       warn "could not resolve dex2jar release; manual: https://github.com/pxb1988/dex2jar/releases"
     fi
+  else
+    ok "dex-tools already installed"
+  fi
+  # Ensure d2j-* shims are on PATH (layout varies: /opt/dex-tools/*.sh or
+  # /opt/dex-tools/dex-tools-v2.4/*.sh). Re-run safe.
+  if [[ -d /opt/dex-tools ]]; then
+    local d2j
+    while IFS= read -r d2j; do
+      [[ -e "$d2j" ]] && ln -sf "$d2j" "/usr/local/bin/$(basename "$d2j")"
+    done < <(find /opt/dex-tools -maxdepth 2 -name 'd2j-*.sh' -type f 2>/dev/null)
+    command -v d2j-dex2jar.sh >/dev/null 2>&1 && ok "d2j-* on PATH" || warn "no d2j-*.sh found under /opt/dex-tools"
   fi
 
   # --- apksigner (APK signing/verification) ---
