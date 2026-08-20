@@ -114,7 +114,7 @@ if [[ -f /etc/apt/sources.list.d/nodesource.list || -d /usr/share/keyrings/nodes
   fi
 fi
 
-APT_PACKAGES=(checkra1n apktool scrcpy sqlitebrowser radare2 zaproxy ghidra android-tools-adb pidcat dex2jar)
+APT_PACKAGES=(checkra1n apksigner apktool scrcpy sqlitebrowser radare2 zaproxy ghidra android-tools-adb pidcat dex2jar)
 installed_apt=()
 for p in "${APT_PACKAGES[@]}"; do dpkg -s "$p" >/dev/null 2>&1 && installed_apt+=("$p"); done
 if [[ ${#installed_apt[@]} -gt 0 ]]; then

@@ -405,7 +405,7 @@ install_ios() {
       || warn "needle clone failed"
   fi
 
-  # --- class-dump (macOS-only binary; source kept for reference) ---
+  # --- class-dump (Objective-C headers from Mach-O) ---
   log "class-dump"
   if [[ -d "$LAB_IOS/class-dump" ]]; then
     ok "class-dump source already present"
@@ -413,7 +413,69 @@ install_ios() {
     git clone --depth 1 https://github.com/nygard/class-dump "$LAB_IOS/class-dump" 2>/dev/null \
       && ok "class-dump source -> $LAB_IOS/class-dump" || warn "class-dump clone failed"
   fi
-  warn "class-dump builds for macOS only - compile/run it on a Mac (brew install class-dump)"
+
+  # Stage official prebuilt binaries (macOS x86_64) for use on a Mac
+  if [[ -d "$LAB_IOS/class-dump" ]]; then
+    local cd_bin="$LAB_IOS/class-dump/macos-binaries"
+    mkdir -p "$cd_bin"
+    for b in class-dump class-dump-swift; do
+      if [[ ! -f "$cd_bin/$b" ]]; then
+        fetch "https://raw.githubusercontent.com/testableapple/class-dump-binaries/master/binaries/$b" "$cd_bin/$b" \
+          && chmod +x "$cd_bin/$b" && ok "staged $b (macOS binary) -> $cd_bin/$b"
+      fi
+    done
+    warn "class-dump binaries are macOS x86_64 only - use them on a Mac (copy $cd_bin/* to a Mac)"
+
+    # Attempt a native Linux build via GNUstep. This needs the GNUstep ObjC
+    # runtime (libobjc2, the LLVM/Apple-compatible runtime). Debian/Kali ship
+    # only GCC's libobjc.so.4, so we fast-fail with an honest hint instead of
+    # running a guaranteed-dead ~100MB toolchain build.
+    if pkg-config --exists gnustep-base 2>/dev/null \
+       && command -v gnustep-config >/dev/null 2>&1 \
+       && ls /usr/lib/*/libobjc.so.2* >/dev/null 2>&1; then
+      log "GNUstep toolchain found - attempting native class-dump build (may take a while)"
+      apt_install gnustep-make libgnustep-base-dev gobjc-12 libobjc-12-dev clang
+      local cd_src="$LAB_IOS/class-dump"
+      cd "$cd_src" || return 0
+      sed -i 's|#include <libc.h>|#include <stddef.h>\n#include <stdio.h>|' class-dump.m 2>/dev/null || true
+      cat > GNUmakefile <<'EOF'
+include $(GNUSTEP_MAKEFILES)/common.make
+TOOL_NAME = class-dump
+class-dump_OBJC_FILES = class-dump.m $(wildcard Source/*.m)
+class-dump_CC_FILES = $(wildcard Source/*.c)
+class-dump_ADDITIONAL_CPPFLAGS = -ISource
+class-dump_ADDITIONAL_CFLAGS = -Wno-deprecated-declarations -Wno-objc-root-class -fno-strict-aliasing
+include $(GNUSTEP_MAKEFILES)/tool.make
+EOF
+      if source /usr/share/GNUstep/Makefiles/GNUstep.sh 2>/dev/null && make -j"$(nproc)" >/dev/null 2>&1 \
+         && [[ -x "$cd_src/obj/class-dump" ]]; then
+        ln -sf "$cd_src/obj/class-dump" /usr/local/bin/class-dump
+        ok "class-dump built natively -> /usr/local/bin/class-dump"
+      else
+        warn "class-dump Linux build failed (GNUstep runtime/libobjc2 or Apple mach-o headers missing)."
+        warn "Use the staged macOS binaries (macos-binaries/) or on Linux: 'pip install k2l' or 'ipsw class-dump'."
+      fi
+    else
+      warn "GNUstep runtime (libobjc2) not available on this distro - class-dump Linux build skipped."
+      warn "Staged macOS binaries are at $LAB_IOS/class-dump/macos-binaries/; on Linux use 'ipsw class-dump' or 'pip install k2l'."
+    fi
+  fi
+
+  # --- jtool2 (Mach-O analysis; official build is macOS/iOS only) ---
+  log "jtool2"
+  if [[ -d "$LAB_IOS/jtool2" ]]; then
+    ok "jtool2 already staged"
+  else
+    mkdir -p "$LAB_IOS/jtool2"
+    if fetch "https://newosxbook.com/tools/jtool2.tgz" "$LAB_TMP/jtool2.tgz"; then
+      tar xzf "$LAB_TMP/jtool2.tgz" -C "$LAB_IOS/jtool2" 2>/dev/null
+      chmod +x "$LAB_IOS/jtool2"/jtool2 "$LAB_IOS/jtool2"/disarm 2>/dev/null
+      ok "jtool2 staged -> $LAB_IOS/jtool2/ (jtool2 + disarm)"
+      warn "jtool2 ships macOS/iOS Mach-O binaries only - copy to a Mac to run (Linux alternative: 'ipsw')"
+    else
+      warn "jtool2 download failed - manual: https://newosxbook.com/tools/jtool.html"
+    fi
+  fi
 
   ok "iOS section complete"
 }
@@ -504,6 +566,10 @@ EOF
       warn "could not resolve dex2jar release; manual: https://github.com/pxb1988/dex2jar/releases"
     fi
   fi
+
+  # --- apksigner (APK signing/verification) ---
+  log "apksigner"
+  command -v apksigner >/dev/null 2>&1 && ok "apksigner already installed" || { apt_install apksigner; command -v apksigner >/dev/null 2>&1 && ok "apksigner installed" || warn "apksigner not available (try 'apt install apksigner')"; }
 
   # --- objection ---
   log "objection"
@@ -822,8 +888,8 @@ $LAB_ROOT
 
 | Folder      | Contents |
 |-------------|----------|
-| \`ios/\`       | checkra1n, palera1n, Frida, Grapefruit (igf), frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, class-dump, Radare2 |
-| \`android/\`   | Android Studio, jadx, dex-tools, objection, pidcat, scrcpy, frida-gadget, APKLeaks, Androguard, QARK, Drozer |
+| \`ios/\`       | checkra1n, palera1n, Frida, Grapefruit (igf), frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, class-dump (+mac binaries), jtool2, Radare2 |
+| \`android/\`   | Android Studio, jadx, dex-tools, apksigner, objection, pidcat, scrcpy, frida-gadget, APKLeaks, Androguard, QARK, Drozer |
 | \`flutter/\`   | reFlutter, kill_flutter |
 | \`web/\`       | Burp Suite Community, RMS, OWASP ZAP |
 | \`utils/\`     | Ghidra, Termius, DB Browser for SQLite, Apktool |
@@ -850,8 +916,9 @@ EOF
 | bfinject | source | inject dylibs into running iOS processes (iOS < 11) |
 | ssl-kill-switch2 | source | disable SSL validation / pinning in iOS apps (build & install on device via theos/Sileo) |
 | needle | source | iOS assessment framework - ARCHIVED, use objection |
-| class-dump | source | ObjC header extraction - macOS-only, compile on a Mac |
-| radare2 | apt binary | `r2` - binary analysis / disassembly |
+| class-dump | source + mac binaries | ObjC header extraction - official binaries in \`macos-binaries/\` are macOS x86_64 (copy to a Mac); Linux alternative: \`ipsw class-dump\` / \`pip install k2l\` |
+| jtool2 | mac binary | \`jtool2\` - Mach-O analysis/entitlements/signing (macOS/iOS only; use \`ipsw\` on Linux) |
+| radare2 | apt binary | \`r2\` - binary analysis / disassembly |
 
 ### Typical workflow
 1. Jailbreak with `checkra1n` or `palera1n`
@@ -868,6 +935,7 @@ EOF
 | Android Studio | binary | `studio` - IDE; includes SDK, emulator (dynamic analysis) |
 | jadx / jadx-gui | binary | decompile APK -> Java source. `jadx app.apk` / `jadx-gui` |
 | dex-tools | binary | `d2j-dex2jar.sh`, `d2j-dex2smali.sh`, ... - convert/decompile .dex |
+| apksigner | apt binary | `apksigner verify --print-certs app.apk` / sign APKs (also in Android SDK build-tools) |
 | objection | pip (venv) | `objection -g <app> explore` - runtime exploration, SSL-pinning bypass |
 | pidcat | source | `pidcat` - colored logcat by package |
 | scrcpy | apt binary | `scrcpy` - display/control Android over USB |
@@ -986,10 +1054,10 @@ section "Done"
 cat <<EOF
 ${C_GRN}Installed tools:${C_RST}
   iOS  : checkra1n, palera1n, Grapefruit (igf), Frida, Radare2, frida-ios-dump,
-         bfinject, SSL-Kill-Switch-2, needle, class-dump (macOS-only, source kept)
-  Android: Android Studio (studio), jadx / jadx-gui, dex-tools (d2j-*), objection,
-         pidcat, scrcpy, frida-gadget ($LAB_ANDROID/frida-gadget), APKLeaks,
-         Androguard, QARK, Drozer
+         bfinject, SSL-Kill-Switch-2, needle, class-dump (+macos-binaries), jtool2 (mac)
+  Android: Android Studio (studio), jadx / jadx-gui, dex-tools (d2j-*), apksigner,
+         objection, pidcat, scrcpy, frida-gadget ($LAB_ANDROID/frida-gadget),
+         APKLeaks, Androguard, QARK, Drozer
   Flutter: reflutter (SSL pinning bypass / engine patch), kill_flutter (dynamic bypass)
   Web  : Burp Suite Community (burpsuite), RMS, OWASP ZAP (zaproxy)
   Utils: Ghidra (ghidraRun), Termius (termius-app), DB Browser (sqlitebrowser), Apktool
@@ -1014,7 +1082,8 @@ ${C_GRN}Quick references:${C_RST}
 
 ${C_YLW}Notes:${C_RST}
   - Burp: run 'burpsuite', choose Community Edition. A GUI session is required.
-  - class-dump is macOS-only; compile on a Mac (brew install class-dump).
+  - class-dump/jtool2 ship macOS binaries (in $LAB_IOS/class-dump/macos-binaries and $LAB_IOS/jtool2);
+    on Linux use 'ipsw class-dump' or 'pip install k2l' as native alternatives.
   - Drozer/QARK are legacy; install their server/agent side on the target device as needed.
   - If you are in the docker group, log out and back in for permission to apply.
 EOF

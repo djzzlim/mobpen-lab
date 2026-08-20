@@ -10,9 +10,11 @@ a systemd service — all organized under a single documented folder layout.
 ## Features
 
 - **iOS** — checkra1n, palera1n, Frida, Grapefruit (web UI over Frida),
-  frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, class-dump, Radare2
+  frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, class-dump (mac binaries
+  staged), jtool2 (mac binary), Radare2
 - **Android** — Android Studio (latest stable), jadx / jadx-gui, dex-tools,
-  objection, pidcat, scrcpy, Frida Gadget, APKLeaks, Androguard, QARK, Drozer
+  apksigner, objection, pidcat, scrcpy, Frida Gadget, APKLeaks, Androguard,
+  QARK, Drozer
 - **Flutter** — reFlutter, kill_flutter (SSL-pinning bypass that works on any
   Flutter version)
 - **Web / Network** — Burp Suite Community, Runtime Mobile Security (RMS),
@@ -125,8 +127,9 @@ frida-ios-dump/dump.py <bundle-id>            # dump decrypted IPA
 
 # Android
 studio                                        # Android Studio
-jadx app.apk                                  # APK -> Java
-d2j-dex2jar.sh app.apk                        # DEX -> JAR
+jadx app.apk                                    # APK -> Java
+apksigner verify --print-certs app.apk          # check signing cert
+d2j-dex2jar.sh app.apk                          # DEX -> JAR
 apkleaks -f app.apk                           # find secrets / endpoints
 objection -g <app> explore                    # runtime exploration, pinning bypass
 scrcpy                                        # mirror device screen
