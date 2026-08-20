@@ -805,22 +805,31 @@ install_web() {
 
   # --- Burp Suite Community (JAR-based, non-interactive) ---
   log "Burp Suite Community Edition"
-  if [[ -f /opt/burpsuite/burpsuite_community.jar ]]; then
-    ok "Burp Suite jar already downloaded"
+  if command -v burpsuite >/dev/null 2>&1 && [[ -f /opt/burpsuite/burpsuite_community.jar ]]; then
+    ok "Burp Suite already installed (launcher + jar present)"
   else
-    mkdir -p /opt/burpsuite
-    if fetch "https://portswigger.net/burp/releases/download?product=community&type=jar" /opt/burpsuite/burpsuite_community.jar; then
-      ok "Burp Suite jar downloaded"
+    if [[ ! -f /opt/burpsuite/burpsuite_community.jar ]]; then
+      mkdir -p /opt/burpsuite
+      if fetch "https://portswigger.net/burp/releases/download?product=community&type=jar" /opt/burpsuite/burpsuite_community.jar; then
+        ok "Burp Suite jar downloaded"
+      else
+        warn "Burp Suite download failed - manual: https://portswigger.net/burp/communitydownload"
+      fi
     else
-      warn "Burp Suite download failed - manual: https://portswigger.net/burp/communitydownload"
+      ok "Burp Suite jar already present"
     fi
-  fi
-  cat > /usr/local/bin/burpsuite <<'EOF'
+    if [[ ! -f /usr/local/bin/burpsuite ]]; then
+      cat > /usr/local/bin/burpsuite <<'EOF'
 #!/usr/bin/env bash
 exec java -jar /opt/burpsuite/burpsuite_community.jar "$@"
 EOF
-  chmod +x /usr/local/bin/burpsuite
-  cat > /usr/share/applications/burpsuite.desktop <<'EOF'
+      chmod +x /usr/local/bin/burpsuite
+      ok "burpsuite launcher installed"
+    else
+      ok "burpsuite launcher already present"
+    fi
+    if [[ ! -f /usr/share/applications/burpsuite.desktop ]]; then
+      cat > /usr/share/applications/burpsuite.desktop <<'EOF'
 [Desktop Entry]
 Name=Burp Suite Community
 Comment=Intercepting web proxy
@@ -830,7 +839,9 @@ Terminal=false
 Type=Application
 Categories=Development;Security;
 EOF
-  ok "burpsuite launcher installed"
+      ok "burpsuite desktop entry installed"
+    fi
+  fi
 
   # --- Runtime Mobile Security (RMS) ---
   log "Runtime Mobile Security (RMS)"
