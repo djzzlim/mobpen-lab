@@ -1,0 +1,13 @@
+# Installer artifacts / local scratch
+.tmp/
+*.log
+*.deb
+*.tar.gz
+*.zip
+*.jar
+*.so
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+*~
