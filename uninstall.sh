@@ -42,7 +42,7 @@ confirm() { # $1 = question ; returns 0 for yes
 }
 
 # Symlinks/scripts created by install.sh into /usr/local/bin
-BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui burpsuite palera1n checkra1n igf mobpen ipsw ktool ktool_bless)
+BIN_LINKS=(frida frida-ps frida-trace frida-join frida-inject objection pidcat apkleaks androguard qark drozer reflutter kill_flutter rms studio jadx jadx-gui burpsuite palera1n checkra1n igf mobpen ipsw ktool ktool_bless cutter fastboot zipalign)
 D2J_LINKS=(/usr/local/bin/d2j-*.sh)
 
 remove_usr_local_bin() {
@@ -114,7 +114,7 @@ if [[ -f /etc/apt/sources.list.d/nodesource.list || -d /usr/share/keyrings/nodes
   fi
 fi
 
-APT_PACKAGES=(checkra1n apksigner apktool scrcpy sqlitebrowser radare2 zaproxy ghidra android-tools-adb pidcat dex2jar virtualbox-guest-utils virtualbox-guest-x11 virtualbox-guest-dkms open-vm-tools-desktop)
+APT_PACKAGES=(checkra1n apksigner apktool scrcpy sqlitebrowser radare2 zaproxy ghidra android-tools-adb pidcat dex2jar zipalign fastboot virtualbox-guest-utils virtualbox-guest-x11 virtualbox-guest-dkms open-vm-tools-desktop)
 installed_apt=()
 for p in "${APT_PACKAGES[@]}"; do dpkg -s "$p" >/dev/null 2>&1 && installed_apt+=("$p"); done
 if [[ ${#installed_apt[@]} -gt 0 ]]; then

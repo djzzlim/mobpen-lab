@@ -605,6 +605,34 @@ EOF
   log "apksigner"
   command -v apksigner >/dev/null 2>&1 && ok "apksigner already installed" || { apt_install apksigner; command -v apksigner >/dev/null 2>&1 && ok "apksigner installed" || warn "apksigner not available (try 'apt install apksigner')"; }
 
+  # --- adb + fastboot (device tooling; package names differ across distros) ---
+  log "adb / fastboot"
+  local ab_pkg fb_pkg
+  ab_pkg="$(apt_pick adb android-tools-adb || true)"
+  fb_pkg="$(apt_pick fastboot android-tools-fastboot || true)"
+  for pkg in "$ab_pkg" "$fb_pkg"; do
+    [[ -n "$pkg" ]] && apt_install "$pkg"
+  done
+  command -v adb >/dev/null 2>&1 && ok "adb installed" || warn "adb not on PATH"
+  command -v fastboot >/dev/null 2>&1 && ok "fastboot installed" || warn "fastboot not on PATH"
+
+  # --- zipalign (APK zip alignment for release signing) ---
+  log "zipalign"
+  command -v zipalign >/dev/null 2>&1 && ok "zipalign already installed" || { apt_install zipalign; command -v zipalign >/dev/null 2>&1 && ok "zipalign installed" || warn "zipalign unavailable"; }
+
+  # --- keytool / jarsigner (JDK signing tooling, shipped with the JDK) ---
+  log "keytool / jarsigner"
+  if command -v keytool >/dev/null 2>&1 && command -v jarsigner >/dev/null 2>&1; then
+    ok "keytool + jarsigner present (JDK)"
+  else
+    local jdk_extra
+    jdk_extra="$(apt_pick openjdk-21-jdk-headless openjdk-25-jdk-headless openjdk-17-jdk-headless default-jdk-headless || true)"
+    [[ -n "$jdk_extra" ]] && apt_install "$jdk_extra"
+    command -v keytool >/dev/null 2>&1 && command -v jarsigner >/dev/null 2>&1 \
+      && ok "keytool + jarsigner present after JDK install" \
+      || warn "keytool/jarsigner not found - install a JDK (e.g. openjdk-21-jdk-headless)"
+  fi
+
   # --- objection ---
   log "objection"
   if command -v objection >/dev/null 2>&1; then
@@ -817,6 +845,29 @@ install_utils() {
   log "Apktool"
   command -v apktool >/dev/null 2>&1 && ok "apktool already installed" || apt_install apktool
 
+  # --- Cutter (radare2/rizin GUI) via AppImage, extracted to avoid FUSE ---
+  log "Cutter (radare2/rizin GUI)"
+  if command -v cutter >/dev/null 2>&1 || [[ -x "$LAB_BIN/cutter/AppRun" ]]; then
+    ok "cutter already installed"
+  else
+    local cut_url cut_app
+    cut_url="$(gh_latest_asset rizinorg/cutter 'Cutter-v[0-9].*Linux.*x86_64\.AppImage$' || true)"
+    if [[ -n "$cut_url" ]]; then
+      fetch "$cut_url" "$LAB_TMP/cutter.AppImage" && {
+        chmod +x "$LAB_TMP/cutter.AppImage"
+        local cut_ext="$LAB_TMP/cutter-ext"
+        rm -rf "$cut_ext" && mkdir -p "$cut_ext"
+        ( cd "$cut_ext" && "$LAB_TMP/cutter.AppImage" --appimage-extract >/dev/null 2>&1 ) \
+          && mv "$cut_ext/squashfs-root" "$LAB_BIN/cutter" \
+          && ln -sf "$LAB_BIN/cutter/AppRun" /usr/local/bin/cutter
+        command -v cutter >/dev/null 2>&1 && ok "cutter -> /usr/local/bin/cutter" || warn "cutter extraction failed (manual: extract the AppImage and symlink AppRun)"
+        rm -rf "$cut_ext" "$LAB_TMP/cutter.AppImage"
+      } || warn "cutter download failed - manual: https://github.com/rizinorg/cutter/releases"
+    else
+      warn "could not resolve cutter release; manual: https://github.com/rizinorg/cutter/releases"
+    fi
+  fi
+
   ok "Utilities section complete"
 }
 
@@ -923,10 +974,10 @@ $LAB_ROOT
 | Folder      | Contents |
 |-------------|----------|
 | \`ios/\`       | checkra1n, palera1n, Frida, Grapefruit (igf), frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, ipsw, ktool, class-dump (source), Radare2 |
-| \`android/\`   | Android Studio, jadx, dex-tools, apksigner, objection, pidcat, scrcpy, frida-gadget, APKLeaks, Androguard, QARK, Drozer |
+| \`android/\`   | Android Studio, jadx, dex-tools, apksigner, keytool/jarsigner, zipalign, adb/fastboot, objection, pidcat, scrcpy, frida-gadget, APKLeaks, Androguard, QARK, Drozer |
 | \`flutter/\`   | reFlutter, kill_flutter |
 | \`web/\`       | Burp Suite Community, RMS, OWASP ZAP |
-| \`utils/\`     | Ghidra, Termius, DB Browser for SQLite, Apktool |
+| \`utils/\`     | Ghidra, Cutter (radare2/rizin GUI), Termius, DB Browser for SQLite, Apktool, Radare2 |
 
 ## Related locations
 
@@ -971,6 +1022,9 @@ EOF
 | jadx / jadx-gui | binary | decompile APK -> Java source. `jadx app.apk` / `jadx-gui` |
 | dex-tools | binary | `d2j-dex2jar.sh`, `d2j-dex2smali.sh`, ... - convert/decompile .dex |
 | apksigner | apt binary | `apksigner verify --print-certs app.apk` / sign APKs (also in Android SDK build-tools) |
+| keytool / jarsigner | JDK | `keytool -genkeypair -alias key -keystore ks.jks` then `jarsigner -keystore ks.jks app.apk key` |
+| zipalign | apt binary | `zipalign -v 4 app.apk aligned.apk` - align APK resources for release |
+| adb / fastboot | apt binary | `adb devices`, `adb logcat`; `fastboot flash ...` - device tooling |
 | objection | pip (venv) | `objection -g <app> explore` - runtime exploration, SSL-pinning bypass |
 | pidcat | source | `pidcat` - colored logcat by package |
 | scrcpy | apt binary | `scrcpy` - display/control Android over USB |
@@ -1037,6 +1091,10 @@ Generated: $(date -u '+%Y-%m-%d %H:%M UTC')
 - \`studio\`                         Android Studio
 - \`jadx\` / \`jadx-gui\`             DEX decompiler
 - \`d2j-dex2jar.sh app.apk\`         dex -> jar
+- \`apksigner verify --print-certs app.apk\`   check signing cert
+- \`keytool -genkeypair ...\`, \`jarsigner -keystore ks.jks app.apk key\`   sign an APK
+- \`zipalign -v 4 app.apk out.apk\`  align APK for release
+- \`adb devices\` / \`adb logcat\`    device tooling; \`fastboot flash ...\`
 - \`objection\`, \`pidcat\`, \`scrcpy\`
 - \`apkleaks -f app.apk\`, \`androguard\`, \`qark\`, \`drozer\`
 - \`apktool d app.apk\`              decode apk
@@ -1092,11 +1150,12 @@ ${C_GRN}Installed tools:${C_RST}
          bfinject, SSL-Kill-Switch-2, needle, ipsw (class-dump/macho), ktool,
          class-dump (source, for macOS builds)
   Android: Android Studio (studio), jadx / jadx-gui, dex-tools (d2j-*), apksigner,
-         objection, pidcat, scrcpy, frida-gadget ($LAB_ANDROID/frida-gadget),
-         APKLeaks, Androguard, QARK, Drozer
+         keytool / jarsigner, zipalign, adb / fastboot, objection, pidcat, scrcpy,
+         frida-gadget ($LAB_ANDROID/frida-gadget), APKLeaks, Androguard, QARK, Drozer
   Flutter: reflutter (SSL pinning bypass / engine patch), kill_flutter (dynamic bypass)
   Web  : Burp Suite Community (burpsuite), RMS, OWASP ZAP (zaproxy)
-  Utils: Ghidra (ghidraRun), Termius (termius-app), DB Browser (sqlitebrowser), Apktool
+  Utils: Ghidra (ghidraRun), Cutter (cutter), Radare2 (r2), Termius (termius-app),
+         DB Browser (sqlitebrowser), Apktool
 
 ${C_GRN}Services:${C_RST}
   MobSF : http://127.0.0.1:8000   (login: mobsf / mobsf)

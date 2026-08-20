@@ -13,13 +13,14 @@ a systemd service — all organized under a single documented folder layout.
   frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, ipsw + ktool
   (Linux-native class-dump / Mach-O analysis), Radare2
 - **Android** — Android Studio (latest stable), jadx / jadx-gui, dex-tools,
-  apksigner, objection, pidcat, scrcpy, Frida Gadget, APKLeaks, Androguard,
-  QARK, Drozer
+  apksigner, keytool / jarsigner, zipalign, adb / fastboot, objection, pidcat,
+  scrcpy, Frida Gadget, APKLeaks, Androguard, QARK, Drozer
 - **Flutter** — reFlutter, kill_flutter (SSL-pinning bypass that works on any
   Flutter version)
 - **Web / Network** — Burp Suite Community, Runtime Mobile Security (RMS),
   OWASP ZAP
-- **Utilities** — Ghidra, Termius, DB Browser for SQLite, Apktool
+- **Utilities** — Ghidra, Cutter (radare2/rizin GUI), Radare2, Termius,
+  DB Browser for SQLite, Apktool
 - **Docker + MobSF** — Docker installed and MobSF run as an autostart
   `mobsf.service` on `http://127.0.0.1:8000`
 - **Organized & documented** — every tool lands in a categorized folder under
