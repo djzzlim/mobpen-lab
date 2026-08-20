@@ -9,7 +9,7 @@ a systemd service — all organized under a single documented folder layout.
 
 ## Features
 
-- **iOS** — checkra1n, palera1n, Frida, Grapefruit (web UI over Frida),
+- **iOS** — palera1n, Frida, Grapefruit (web UI over Frida),
   frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, ipsw + ktool
   (Linux-native class-dump / Mach-O analysis), Radare2
 - **Android** — Android Studio (latest stable), jadx / jadx-gui, dex-tools,
@@ -120,7 +120,6 @@ workflow. The docs regenerate on every install run.
 
 ```bash
 # iOS
-checkra1n -c                                  # jailbreak (CLI)
 palera1n --help                               # jailbreak iOS 15-18 (checkm8)
 frida-ps -U                                   # list apps on device
 igf                                           # Grapefruit web UI -> http://127.0.0.1:31337

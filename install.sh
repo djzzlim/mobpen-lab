@@ -180,6 +180,35 @@ link_bin() {
   fi
 }
 
+# Repair a broken zsh install. Fresh boxes sometimes lose the zsh modules
+# (failed to load module 'zsh/complist' / comparguments: command not found)
+# when a source-built zsh shadows the distro one or the modules dir is missing.
+repair_zsh() {
+  local probe='zmodload zsh/complist && autoload -Uz comparguments'
+  if command -v zsh >/dev/null 2>&1; then
+    if zsh -fc "$probe" >/dev/null 2>&1; then
+      ok "zsh modules OK"
+      return 0
+    fi
+    warn "zsh modules broken (complist/comparguments) - reinstalling zsh"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall zsh zsh-common >/dev/null 2>&1 \
+      || apt_install zsh zsh-common
+    # A source-built zsh under /usr/local shadows the distro /usr/bin/zsh
+    if [[ -x /usr/local/bin/zsh && "$(command -v zsh)" != /usr/bin/zsh ]]; then
+      warn "non-system zsh at $(command -v zsh) - removing /usr/local/bin/zsh"
+      rm -f /usr/local/bin/zsh
+    fi
+    if zsh -fc "$probe" >/dev/null 2>&1; then
+      ok "zsh modules repaired"
+    else
+      warn "zsh modules still broken after reinstall - run manually: apt-get install --reinstall zsh zsh-common"
+    fi
+  else
+    apt_install zsh zsh-common
+    ok "zsh installed"
+  fi
+}
+
 # Create the organized lab layout + migrate any old flat-layout installs
 mkdir -p "$LAB_ROOT" "$LAB_IOS" "$LAB_ANDROID" "$LAB_WEB" "$LAB_FLUTTER" "$LAB_BIN" "$LAB_DOCS" "$LAB_TMP"
 
@@ -218,6 +247,8 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get upgrade -y || warn "apt upgrade had issues - continuing anyway"
+
+  repair_zsh
 
   # Detect the hypervisor (systemd-detect-virt, falling back to DMI info)
   VM_KIND="none"; virt=""
@@ -286,11 +317,24 @@ if [[ "$MODE" == "all" || "$DO_IOS" == "1" || "$DO_ANDROID" == "1" || "$DO_WEB" 
     "${VENV}/bin/pip" install --upgrade pip wheel setuptools || true
   fi
 
-  # Install the 'mobpen' management CLI (only when run from a repo checkout)
+  # Install the 'mobpen' management CLI.
+  # From a repo checkout we symlink directly. When run via `curl | sudo bash`
+  # there is no checkout, so clone the repo to a persistent location first.
   repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" && pwd 2>/dev/null || true)"
+  if [[ -z "$repo_dir" || ! -f "$repo_dir/mobpen" ]]; then
+    repo_dir="$LAB_ROOT/mobpen-lab"
+    if [[ ! -d "$repo_dir" ]]; then
+      log "Cloning mobpen-lab repo to $repo_dir (for the 'mobpen' CLI)"
+      rm -rf "$repo_dir"
+      git clone -q --depth 1 https://github.com/djzzlim/mobpen-lab.git "$repo_dir" \
+        || repo_dir=""
+    fi
+  fi
   if [[ -n "$repo_dir" && -f "$repo_dir/mobpen" ]]; then
     ln -sf "$repo_dir/mobpen" /usr/local/bin/mobpen
     ok "installed 'mobpen' CLI -> /usr/local/bin/mobpen (from $repo_dir)"
+  else
+    warn "could not install 'mobpen' CLI - clone https://github.com/djzzlim/mobpen-lab and symlink its 'mobpen' into /usr/local/bin"
   fi
 fi
 
@@ -300,42 +344,19 @@ fi
 install_ios() {
   section "iOS tools"
 
-  # --- checkra1n (Debian APT repo) ---
-  log "checkra1n (via official APT repo)"
-  if command -v checkra1n >/dev/null 2>&1; then
-    ok "checkra1n already installed"
-  else
-    mkdir -p /usr/share/keyrings
-    curl -fsSL https://assets.checkra.in/debian/archive.key | gpg --dearmor -o /usr/share/keyrings/checkra1n.gpg
-    echo 'deb [signed-by=/usr/share/keyrings/checkra1n.gpg] https://assets.checkra.in/debian /' \
-      > /etc/apt/sources.list.d/checkra1n.list
-    apt-get update -y || true
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y checkra1n >/dev/null 2>&1; then
-      ok "checkra1n installed via apt"
-    else
-      # Kali dropped libncurses5/libgdk-pixbuf2.0-0 etc, so the apt package
-      # often fails. Fall back to extracting the binary from the .deb.
-      warn "checkra1n apt install failed (missing legacy libs on Kali) - extracting binary from .deb"
-      local chk_deb chk_dir
-      chk_deb="$(curl -fsSL https://assets.checkra.in/debian/Packages 2>/dev/null | grep -E '^Filename: ./checkra1n_0\.12\.4' | head -n1 | sed 's|^Filename: ./||')"
-      [[ -n "$chk_deb" ]] || chk_deb="checkra1n_0.12.4_amd64.deb"
-      chk_dir="/opt/mobpen-lab/ios/checkra1n"
-      if fetch "https://assets.checkra.in/debian/$chk_deb" "$LAB_TMP/checkra1n.deb"; then
-        rm -rf "$chk_dir" && mkdir -p "$chk_dir"
-        dpkg-deb -x "$LAB_TMP/checkra1n.deb" "$chk_dir"
-        if [[ -f "$chk_dir/usr/bin/checkra1n" ]]; then
-          ln -sf "$chk_dir/usr/bin/checkra1n" /usr/local/bin/checkra1n
-          ok "checkra1n binary extracted to $chk_dir"
-          warn "checkra1n still needs legacy libs (libncurses5, libgdk-pixbuf2.0-0) that Kali removed."
-          warn "It may not launch here - prefer 'palera1n' (installed by this script) or run checkra1n on Debian 10/11 or a VM."
-        else
-          warn "checkra1n .deb extraction failed - manual: https://checkra.in"
-        fi
-      else
-        warn "checkra1n download failed - manual: https://checkra.in"
-      fi
-    fi
-  fi
+# --- checkra1n (deprecated) ---
+  # checkra1n is unmaintained (last release 0.12.4, 2021) and its binary needs
+  # legacy libs (libncurses5, libgdk-pixbuf2.0-0, libirecovery-1.0.so.3) that
+  # modern distros no longer ship, so it cannot run here. Remove any stale
+  # install and point the user at palera1n, which this script installs.
+  log "checkra1n (removing - deprecated, superseded by palera1n)"
+  rm -f /usr/local/bin/checkra1n
+  rm -rf /opt/mobpen-lab/ios/checkra1n
+  rm -f /etc/apt/sources.list.d/checkra1n.list
+  rm -f /usr/share/keyrings/checkra1n.gpg
+  DEBIAN_FRONTEND=noninteractive apt-get purge -y checkra1n >/dev/null 2>&1 || true
+  warn "checkra1n is deprecated (last release 2021) and requires legacy libs that Kali no longer ships."
+  warn "Use 'palera1n' (installed by this script) for iOS 15-17 checkm8/A8+ devices."
 
   # --- palera1n (GitHub latest release) ---
   log "palera1n"
@@ -1000,7 +1021,7 @@ $LAB_ROOT
 
 | Folder      | Contents |
 |-------------|----------|
-| \`ios/\`       | checkra1n, palera1n, Frida, Grapefruit (igf), frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, ipsw, ktool, class-dump (source), Radare2 |
+| \`ios/\`       | palera1n, Frida, Grapefruit (igf), frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, ipsw, ktool, class-dump (source), Radare2 |
 | \`android/\`   | Android Studio, jadx, dex-tools, apksigner, keytool/jarsigner, zipalign, adb/fastboot, objection, pidcat, scrcpy, frida-gadget, APKLeaks, Androguard, QARK, Drozer |
 | \`flutter/\`   | reFlutter, kill_flutter |
 | \`web/\`       | Burp Suite Community, RMS, OWASP ZAP |
@@ -1020,8 +1041,7 @@ EOF
 
 | Tool | Type | Notes |
 |------|------|-------|
-| checkra1n | apt binary | `checkra1n` - checkm8 bootrom jailbreak (iPhone 5s - X). Install CLI: `checkra1n -c` |
-| palera1n | binary | `palera1n` - jailbreak iOS 15-18 on checkm8 devices. `palera1n --help` |
+| palera1n | binary | `palera1n` - jailbreak iOS 15-18 on checkm8 devices. `palera1n --help` (replaces deprecated checkra1n) |
 | frida | pip (venv) | `frida`, `frida-ps`, `frida-trace` - dynamic instrumentation. Needs frida-server on device |
 | Grapefruit | npm (igf) | `igf` - web UI (port 31337) over Frida. Requires Node 22.18+ and frida-server |
 | frida-ios-dump | source | `./dump.py <app>` - dump decrypted IPA from jailbroken device. Edit `dump.py` first |
@@ -1034,7 +1054,7 @@ EOF
 | radare2 | apt binary | \`r2\` - binary analysis / disassembly |
 
 ### Typical workflow
-1. Jailbreak with `checkra1n` or `palera1n`
+1. Jailbreak with `palera1n`
 2. Run frida-server on device, install `frida-tools` on host
 3. `objection -g <app> explore` for runtime manipulation / SSL-pinning bypass
 4. `frida-ios-dump/dump.py <bundle-id>` to grab a decrypted IPA for static analysis
@@ -1106,8 +1126,7 @@ EOF
 Generated: $(date -u '+%Y-%m-%d %H:%M UTC')
 
 ## iOS
-- \`checkra1n [-c]\`                  checkm8 jailbreak (cli)
-- \`palera1n --help\`                 palera1n jailbreak
+- \`palera1n --help\`                 palera1n jailbreak (iOS 15-18, checkm8)
 - \`frida\`, \`frida-ps -U\`, \`frida-trace -U\`   Frida instrumentation
 - \`igf\`                            Grapefruit web UI -> http://127.0.0.1:31337
 - \`r2\`                             radare2
@@ -1173,7 +1192,7 @@ section "Done"
 
 cat <<EOF
 ${C_GRN}Installed tools:${C_RST}
-  iOS  : checkra1n, palera1n, Grapefruit (igf), Frida, Radare2, frida-ios-dump,
+  iOS  : palera1n, Grapefruit (igf), Frida, Radare2, frida-ios-dump,
          bfinject, SSL-Kill-Switch-2, needle, ipsw (class-dump/macho), ktool,
          class-dump (source, for macOS builds)
   Android: Android Studio (studio), jadx / jadx-gui, dex-tools (d2j-*), apksigner,
