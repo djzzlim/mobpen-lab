@@ -10,8 +10,8 @@ a systemd service — all organized under a single documented folder layout.
 ## Features
 
 - **iOS** — checkra1n, palera1n, Frida, Grapefruit (web UI over Frida),
-  frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, class-dump (mac binaries
-  staged), jtool2 (mac binary), Radare2
+  frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, ipsw + ktool
+  (Linux-native class-dump / Mach-O analysis), Radare2
 - **Android** — Android Studio (latest stable), jadx / jadx-gui, dex-tools,
   apksigner, objection, pidcat, scrcpy, Frida Gadget, APKLeaks, Androguard,
   QARK, Drozer
@@ -95,7 +95,7 @@ mobpen version    # show version
 ```
 /opt/mobpen-lab                  # lab root (everything the installer creates)
 ├── README.md                    # lab index (generated)
-├── ios/                         # frida-ios-dump, bfinject, ssl-kill-switch2, needle, class-dump
+├── ios/                         # frida-ios-dump, bfinject, ssl-kill-switch2, needle, class-dump(src)
 ├── android/                     # pidcat, frida-gadget
 ├── web/                         # rms
 ├── flutter/                     # kill_flutter
@@ -124,6 +124,9 @@ palera1n --help                               # jailbreak iOS 15-18 (checkm8)
 frida-ps -U                                   # list apps on device
 igf                                           # Grapefruit web UI -> http://127.0.0.1:31337
 frida-ios-dump/dump.py <bundle-id>            # dump decrypted IPA
+ipsw class-dump app --headers -o ./headers    # ObjC/Swift headers (class-dump equivalent)
+ipsw macho -l app                             # load commands / entitlements (jtool2 equivalent)
+ktool dump --headers --out ./headers app      # pure-Python alternative
 
 # Android
 studio                                        # Android Studio

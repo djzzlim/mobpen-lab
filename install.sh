@@ -405,76 +405,55 @@ install_ios() {
       || warn "needle clone failed"
   fi
 
-  # --- class-dump (Objective-C headers from Mach-O) ---
-  log "class-dump"
+  # --- ipsw (Mach-O / dyld analysis + class-dump; native Linux) ---
+  # Replaces macOS-only tools: ipsw class-dump (ObjC+Swift headers),
+  # ipsw macho (load commands, entitlements, symbols) ~ jtool2/otool.
+  log "ipsw (Mach-O analysis + class-dump, Linux-native)"
+  if command -v ipsw >/dev/null 2>&1; then
+    ok "ipsw already installed"
+  else
+    local ipsw_url
+    ipsw_url="$(gh_latest_asset blacktop/ipsw "ipsw_[0-9].*_linux_${PA_ARCH}\.tar\.gz\$" || true)"
+    if [[ -n "$ipsw_url" ]]; then
+      fetch "$ipsw_url" "$LAB_TMP/ipsw.tar.gz" && {
+        mkdir -p "$LAB_TMP/ipsw-x"
+        tar xzf "$LAB_TMP/ipsw.tar.gz" -C "$LAB_TMP/ipsw-x" 2>/dev/null
+        local ipsw_bin
+        ipsw_bin="$(find "$LAB_TMP/ipsw-x" -maxdepth 1 -type f -name ipsw -print -quit)"
+        if [[ -n "$ipsw_bin" ]]; then
+          mv "$ipsw_bin" /usr/local/bin/ipsw
+          chmod +x /usr/local/bin/ipsw
+          ok "ipsw -> /usr/local/bin/ipsw (class-dump/jtool2 replacement)"
+        else
+          warn "ipsw binary not found inside archive"
+        fi
+        rm -rf "$LAB_TMP/ipsw-x"
+      } || warn "ipsw download failed - manual: https://github.com/blacktop/ipsw/releases"
+    else
+      warn "could not resolve ipsw release; manual: https://github.com/blacktop/ipsw/releases"
+    fi
+  fi
+
+  # --- ktool / k2l (pure-Python Mach-O/ObjC toolkit; class-dump style) ---
+  log "ktool (k2l)"
+  if command -v ktool >/dev/null 2>&1; then
+    ok "ktool already installed"
+  elif [[ "$DO_VENV" == "1" ]]; then
+    "${VENV}/bin/pip" install -q k2l 'setuptools<81' || warn "k2l install failed"
+    link_bin ktool
+    link_bin ktool_bless
+  else
+    pip3 install --break-system-packages k2l 'setuptools<81' || warn "k2l install failed"
+  fi
+
+  # --- class-dump source kept for reference / building on a Mac ---
+  log "class-dump (source kept for reference)"
   if [[ -d "$LAB_IOS/class-dump" ]]; then
-    ok "class-dump source already present"
+    ok "class-dump source already present (native analysis via ipsw/ktool above)"
   else
     git clone --depth 1 https://github.com/nygard/class-dump "$LAB_IOS/class-dump" 2>/dev/null \
-      && ok "class-dump source -> $LAB_IOS/class-dump" || warn "class-dump clone failed"
-  fi
-
-  # Stage official prebuilt binaries (macOS x86_64) for use on a Mac
-  if [[ -d "$LAB_IOS/class-dump" ]]; then
-    local cd_bin="$LAB_IOS/class-dump/macos-binaries"
-    mkdir -p "$cd_bin"
-    for b in class-dump class-dump-swift; do
-      if [[ ! -f "$cd_bin/$b" ]]; then
-        fetch "https://raw.githubusercontent.com/testableapple/class-dump-binaries/master/binaries/$b" "$cd_bin/$b" \
-          && chmod +x "$cd_bin/$b" && ok "staged $b (macOS binary) -> $cd_bin/$b"
-      fi
-    done
-    warn "class-dump binaries are macOS x86_64 only - use them on a Mac (copy $cd_bin/* to a Mac)"
-
-    # Attempt a native Linux build via GNUstep. This needs the GNUstep ObjC
-    # runtime (libobjc2, the LLVM/Apple-compatible runtime). Debian/Kali ship
-    # only GCC's libobjc.so.4, so we fast-fail with an honest hint instead of
-    # running a guaranteed-dead ~100MB toolchain build.
-    if pkg-config --exists gnustep-base 2>/dev/null \
-       && command -v gnustep-config >/dev/null 2>&1 \
-       && ls /usr/lib/*/libobjc.so.2* >/dev/null 2>&1; then
-      log "GNUstep toolchain found - attempting native class-dump build (may take a while)"
-      apt_install gnustep-make libgnustep-base-dev gobjc-12 libobjc-12-dev clang
-      local cd_src="$LAB_IOS/class-dump"
-      cd "$cd_src" || return 0
-      sed -i 's|#include <libc.h>|#include <stddef.h>\n#include <stdio.h>|' class-dump.m 2>/dev/null || true
-      cat > GNUmakefile <<'EOF'
-include $(GNUSTEP_MAKEFILES)/common.make
-TOOL_NAME = class-dump
-class-dump_OBJC_FILES = class-dump.m $(wildcard Source/*.m)
-class-dump_CC_FILES = $(wildcard Source/*.c)
-class-dump_ADDITIONAL_CPPFLAGS = -ISource
-class-dump_ADDITIONAL_CFLAGS = -Wno-deprecated-declarations -Wno-objc-root-class -fno-strict-aliasing
-include $(GNUSTEP_MAKEFILES)/tool.make
-EOF
-      if source /usr/share/GNUstep/Makefiles/GNUstep.sh 2>/dev/null && make -j"$(nproc)" >/dev/null 2>&1 \
-         && [[ -x "$cd_src/obj/class-dump" ]]; then
-        ln -sf "$cd_src/obj/class-dump" /usr/local/bin/class-dump
-        ok "class-dump built natively -> /usr/local/bin/class-dump"
-      else
-        warn "class-dump Linux build failed (GNUstep runtime/libobjc2 or Apple mach-o headers missing)."
-        warn "Use the staged macOS binaries (macos-binaries/) or on Linux: 'pip install k2l' or 'ipsw class-dump'."
-      fi
-    else
-      warn "GNUstep runtime (libobjc2) not available on this distro - class-dump Linux build skipped."
-      warn "Staged macOS binaries are at $LAB_IOS/class-dump/macos-binaries/; on Linux use 'ipsw class-dump' or 'pip install k2l'."
-    fi
-  fi
-
-  # --- jtool2 (Mach-O analysis; official build is macOS/iOS only) ---
-  log "jtool2"
-  if [[ -d "$LAB_IOS/jtool2" ]]; then
-    ok "jtool2 already staged"
-  else
-    mkdir -p "$LAB_IOS/jtool2"
-    if fetch "https://newosxbook.com/tools/jtool2.tgz" "$LAB_TMP/jtool2.tgz"; then
-      tar xzf "$LAB_TMP/jtool2.tgz" -C "$LAB_IOS/jtool2" 2>/dev/null
-      chmod +x "$LAB_IOS/jtool2"/jtool2 "$LAB_IOS/jtool2"/disarm 2>/dev/null
-      ok "jtool2 staged -> $LAB_IOS/jtool2/ (jtool2 + disarm)"
-      warn "jtool2 ships macOS/iOS Mach-O binaries only - copy to a Mac to run (Linux alternative: 'ipsw')"
-    else
-      warn "jtool2 download failed - manual: https://newosxbook.com/tools/jtool.html"
-    fi
+      && ok "class-dump source -> $LAB_IOS/class-dump (needs macOS/GNUstep+libobjc2 to build)" \
+      || warn "class-dump clone failed"
   fi
 
   ok "iOS section complete"
@@ -888,7 +867,7 @@ $LAB_ROOT
 
 | Folder      | Contents |
 |-------------|----------|
-| \`ios/\`       | checkra1n, palera1n, Frida, Grapefruit (igf), frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, class-dump (+mac binaries), jtool2, Radare2 |
+| \`ios/\`       | checkra1n, palera1n, Frida, Grapefruit (igf), frida-ios-dump, bfinject, SSL-Kill-Switch-2, needle, ipsw, ktool, class-dump (source), Radare2 |
 | \`android/\`   | Android Studio, jadx, dex-tools, apksigner, objection, pidcat, scrcpy, frida-gadget, APKLeaks, Androguard, QARK, Drozer |
 | \`flutter/\`   | reFlutter, kill_flutter |
 | \`web/\`       | Burp Suite Community, RMS, OWASP ZAP |
@@ -916,8 +895,9 @@ EOF
 | bfinject | source | inject dylibs into running iOS processes (iOS < 11) |
 | ssl-kill-switch2 | source | disable SSL validation / pinning in iOS apps (build & install on device via theos/Sileo) |
 | needle | source | iOS assessment framework - ARCHIVED, use objection |
-| class-dump | source + mac binaries | ObjC header extraction - official binaries in \`macos-binaries/\` are macOS x86_64 (copy to a Mac); Linux alternative: \`ipsw class-dump\` / \`pip install k2l\` |
-| jtool2 | mac binary | \`jtool2\` - Mach-O analysis/entitlements/signing (macOS/iOS only; use \`ipsw\` on Linux) |
+| ipsw | binary | `ipsw class-dump <bin> --headers -o dir` (ObjC+Swift headers), `ipsw macho -l/-e <bin>` - Linux-native class-dump/jtool2 replacement |
+| ktool | pip (venv) | `ktool dump --headers --out dir <bin>`, `ktool info/lists/objc` - pure-Python Mach-O/ObjC toolkit |
+| class-dump | source | original ObjC header dumper - needs macOS or GNUstep+libobjc2 to build; on Linux use ipsw/ktool |
 | radare2 | apt binary | \`r2\` - binary analysis / disassembly |
 
 ### Typical workflow
@@ -1054,7 +1034,8 @@ section "Done"
 cat <<EOF
 ${C_GRN}Installed tools:${C_RST}
   iOS  : checkra1n, palera1n, Grapefruit (igf), Frida, Radare2, frida-ios-dump,
-         bfinject, SSL-Kill-Switch-2, needle, class-dump (+macos-binaries), jtool2 (mac)
+         bfinject, SSL-Kill-Switch-2, needle, ipsw (class-dump/macho), ktool,
+         class-dump (source, for macOS builds)
   Android: Android Studio (studio), jadx / jadx-gui, dex-tools (d2j-*), apksigner,
          objection, pidcat, scrcpy, frida-gadget ($LAB_ANDROID/frida-gadget),
          APKLeaks, Androguard, QARK, Drozer
@@ -1082,8 +1063,8 @@ ${C_GRN}Quick references:${C_RST}
 
 ${C_YLW}Notes:${C_RST}
   - Burp: run 'burpsuite', choose Community Edition. A GUI session is required.
-  - class-dump/jtool2 ship macOS binaries (in $LAB_IOS/class-dump/macos-binaries and $LAB_IOS/jtool2);
-    on Linux use 'ipsw class-dump' or 'pip install k2l' as native alternatives.
+  - class-dump/jtool2 are macOS-only; the Linux-native equivalents installed here
+    are 'ipsw class-dump' / 'ipsw macho' and 'ktool' (pip k2l).
   - Drozer/QARK are legacy; install their server/agent side on the target device as needed.
   - If you are in the docker group, log out and back in for permission to apply.
 EOF
